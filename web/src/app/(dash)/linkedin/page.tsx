@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { useJob } from "@/hooks/useJob";
-import { Button, Card, Field, Input, Spinner, StatusDot, ErrorInline } from "@/components/ui";
+import { Button, Card, Field, Input, Skeleton, StatusDot, ErrorInline } from "@/components/ui";
 
 interface ImportResult {
   resume_id: number;
@@ -23,20 +23,29 @@ function validUrl(v: string) {
 
 export default function LinkedInPage() {
   const [sessionOk, setSessionOk] = useState<boolean | null>(null);
+  const [checking, setChecking] = useState(true);
   const [url, setUrl] = useState("");
   const job = useJob<ImportResult>();
+  const mounted = useRef(true);
 
   async function checkStatus() {
+    setChecking(true);
     try {
       const s = await api<{ session: boolean }>("/linkedin/status");
-      setSessionOk(!!s.session);
+      if (mounted.current) setSessionOk(!!s.session);
     } catch {
-      setSessionOk(false);
+      if (mounted.current) setSessionOk(false);
+    } finally {
+      if (mounted.current) setChecking(false);
     }
   }
 
   useEffect(() => {
+    mounted.current = true;
     checkStatus();
+    return () => {
+      mounted.current = false;
+    };
   }, []);
 
   async function submit(e: React.FormEvent) {
@@ -49,7 +58,7 @@ export default function LinkedInPage() {
       }),
     );
     // If the session went stale mid-import, reflect it in status.
-    if (!res && job.error && /session not found/i.test(job.error)) setSessionOk(false);
+    if (!res && job.error && /session not found/i.test(job.error) && mounted.current) setSessionOk(false);
   }
 
   const canImport = !!sessionOk && validUrl(url) && !job.running;
@@ -71,11 +80,8 @@ export default function LinkedInPage() {
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-semibold text-ink">Session</h2>
           <div className="flex items-center gap-2 text-sm font-medium">
-            {sessionOk === null ? (
-              <>
-                <Spinner size={14} className="text-ink-faint" />
-                <span className="text-ink-soft">Checking session...</span>
-              </>
+            {checking ? (
+              <Skeleton className="h-5 w-28" />
             ) : sessionOk ? (
               <>
                 <StatusDot tone="good" />
@@ -90,7 +96,7 @@ export default function LinkedInPage() {
           </div>
         </div>
 
-        {sessionOk === false && (
+        {!checking && sessionOk === false && (
           <div className="space-y-3 border-t border-line pt-3">
             <p className="text-xs text-ink-faint">
               No LinkedIn session found. Set one up once:

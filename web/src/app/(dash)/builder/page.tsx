@@ -5,7 +5,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api, pollJob } from "@/lib/api";
-import { Button, Card, Field, Input, Select, Textarea, Spinner, ErrorInline } from "@/components/ui";
+import { Button, Card, Field, Input, Select, Textarea, Skeleton, ErrorInline } from "@/components/ui";
 import { cn } from "@/lib/format";
 
 /* ------------------------------------------------------------------ *
@@ -161,6 +161,13 @@ export default function BuilderPage() {
 function BuilderInner() {
   const searchParams = useSearchParams();
   const sheetRef = useRef<HTMLDivElement>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const [resumes, setResumes] = useState<ResumeRow[]>([]);
   const [jds, setJds] = useState<JdRow[]>([]);
@@ -174,6 +181,7 @@ function BuilderInner() {
 
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [genStage, setGenStage] = useState("");
   const [saveLabel, setSaveLabel] = useState("Save");
   const [error, setError] = useState<string | null>(null);
 
@@ -248,9 +256,11 @@ function BuilderInner() {
           },
         },
       });
+      if (!mounted.current) return;
       setCtxSave("Saved");
-      setTimeout(() => setCtxSave("Save context"), 2000);
+      setTimeout(() => mounted.current && setCtxSave("Save context"), 2000);
     } catch (e) {
+      if (!mounted.current) return;
       setCtxSave("Save context");
       if (e instanceof Error && e.message !== "unauthorized") setError(e.message);
     }
@@ -273,6 +283,7 @@ function BuilderInner() {
       return;
     }
     setGenerating(true);
+    setGenStage("");
     setError(null);
     try {
       // Build runs as a background job (GitHub + LinkedIn enrichment + rewrite
@@ -281,15 +292,21 @@ function BuilderInner() {
         method: "POST",
         body: { resume_id: Number(resumeId), jd_id: jdId ? Number(jdId) : null },
       });
-      const data = await pollJob<BuildResult>(job_id);
+      const data = await pollJob<BuildResult>(job_id, (s, l) => {
+        if (mounted.current) setGenStage(l || s || "");
+      });
+      if (!mounted.current) return;
       setGenId(data.id);
       setContent(data.content);
       setMarkdown(data.markdown || "");
       setNotes(data.tailoring_notes || data.content?._tailoring_notes || []);
     } catch (e) {
-      if (e instanceof Error && e.message !== "unauthorized") setError(e.message);
+      if (mounted.current && e instanceof Error && e.message !== "unauthorized") setError(e.message);
     } finally {
-      setGenerating(false);
+      if (mounted.current) {
+        setGenerating(false);
+        setGenStage("");
+      }
     }
   }
 
@@ -320,10 +337,12 @@ function BuilderInner() {
         `/generated/${genId}`,
         { method: "PUT", body: { content: cur } },
       );
+      if (!mounted.current) return;
       if (data.markdown) setMarkdown(data.markdown);
       setSaveLabel("Saved");
-      setTimeout(() => setSaveLabel("Save"), 2000);
+      setTimeout(() => mounted.current && setSaveLabel("Save"), 2000);
     } catch (e) {
+      if (!mounted.current) return;
       setSaveLabel("Save");
       if (e instanceof Error && e.message !== "unauthorized") setError(e.message);
     }
@@ -379,24 +398,28 @@ function BuilderInner() {
             <Field
               label="Resume"
               htmlFor="resume-sel"
-              hint={!hasResume && !loading ? "none yet" : undefined}
+              hint={loading ? "loading" : !hasResume ? "none yet" : undefined}
             >
-              <Select
-                id="resume-sel"
-                value={resumeId}
-                onChange={(e) => setResumeId(e.target.value)}
-                disabled={loading || !hasResume}
-              >
-                {hasResume ? (
-                  pickResumes.map((r) => (
-                    <option key={r.id} value={r.id}>
-                      {r.filename}
-                    </option>
-                  ))
-                ) : (
-                  <option value="">No resumes yet</option>
-                )}
-              </Select>
+              {loading ? (
+                <Skeleton className="h-10 w-full" />
+              ) : (
+                <Select
+                  id="resume-sel"
+                  value={resumeId}
+                  onChange={(e) => setResumeId(e.target.value)}
+                  disabled={!hasResume}
+                >
+                  {hasResume ? (
+                    pickResumes.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.filename}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">No resumes yet</option>
+                  )}
+                </Select>
+              )}
               {!hasResume && !loading && (
                 <p className="text-xs text-ink-faint">
                   No resumes yet.{" "}
@@ -409,28 +432,43 @@ function BuilderInner() {
             </Field>
 
             <Field label="Job description" htmlFor="jd-sel" hint="optional">
-              <Select
-                id="jd-sel"
-                value={jdId}
-                onChange={(e) => setJdId(e.target.value)}
-                disabled={loading}
-              >
-                <option value="">None (general polish)</option>
-                {jds.map((j) => (
-                  <option key={j.id} value={j.id}>
-                    {j.source_url || j.snippet || `JD #${j.id}`}
-                  </option>
-                ))}
-              </Select>
+              {loading ? (
+                <Skeleton className="h-10 w-full" />
+              ) : (
+                <Select
+                  id="jd-sel"
+                  value={jdId}
+                  onChange={(e) => setJdId(e.target.value)}
+                >
+                  <option value="">None (general polish)</option>
+                  {jds.map((j) => (
+                    <option key={j.id} value={j.id}>
+                      {j.source_url || j.snippet || `JD #${j.id}`}
+                    </option>
+                  ))}
+                </Select>
+              )}
             </Field>
 
-            <Button onClick={generate} loading={generating} disabled={!hasResume} className="w-full">
+            <Button
+              onClick={generate}
+              loading={generating}
+              disabled={loading || !hasResume}
+              className="w-full"
+            >
               {generating ? "Generating..." : content ? "Regenerate" : "Generate resume"}
             </Button>
-            <p className="text-xs text-ink-faint">
-              The builder rewrites your parsed resume with impact-first bullets, tuned to the JD if
-              one is selected.
-            </p>
+            {generating && genStage ? (
+              <p className="flex items-center gap-1.5 text-xs text-ink-soft" aria-live="polite">
+                <span aria-hidden className="inline-block size-1.5 animate-pulse rounded-full bg-blue" />
+                {genStage}
+              </p>
+            ) : (
+              <p className="text-xs text-ink-faint">
+                The builder rewrites your parsed resume with impact-first bullets, tuned to the JD if
+                one is selected.
+              </p>
+            )}
 
             {error && <ErrorInline>{error}</ErrorInline>}
           </Card>
@@ -571,9 +609,28 @@ function BuilderInner() {
           )}
 
           {loading ? (
-            <Card className="flex items-center gap-3 text-sm text-ink-soft">
-              <Spinner size={16} /> Loading your resumes...
-            </Card>
+            <div
+              className="mx-auto w-full max-w-[820px] space-y-4 rounded-xl border border-line bg-paper p-8 shadow-sm md:p-12"
+              aria-busy="true"
+              aria-label="Loading your resumes"
+            >
+              <div className="flex flex-col items-center gap-2">
+                <Skeleton className="h-7 w-56" />
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-3 w-72" />
+              </div>
+              <div className="space-y-3 pt-4">
+                <Skeleton className="h-3 w-32" />
+                <Skeleton className="h-3 w-full" />
+                <Skeleton className="h-3 w-11/12" />
+                <Skeleton className="h-3 w-4/5" />
+              </div>
+              <div className="space-y-3 pt-2">
+                <Skeleton className="h-3 w-28" />
+                <Skeleton className="h-3 w-full" />
+                <Skeleton className="h-3 w-10/12" />
+              </div>
+            </div>
           ) : !content ? (
             <Card
               padded={false}

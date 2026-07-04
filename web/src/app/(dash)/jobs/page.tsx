@@ -14,6 +14,7 @@ import {
   Select,
   Field,
   Spinner,
+  Skeleton,
   EmptyState,
   ErrorInline,
   StatusDot,
@@ -252,13 +253,13 @@ function ResultCard({
 
       <div className="flex flex-wrap items-center gap-1.5">
         {job.heuristic_score != null && (
-          <Badge tone="neutral" mono>
+          <Badge tone="neutral" mono title="Instant heuristic score">
             match {Math.round(job.heuristic_score)}
           </Badge>
         )}
         {job.llm_score != null && (
-          <Badge tone="blue" mono>
-            fit {Math.round(job.llm_score)}
+          <Badge tone="blue" mono title="LLM fit score against your resume">
+            <StatusDot tone="blue" /> fit {Math.round(job.llm_score)}
           </Badge>
         )}
       </div>
@@ -296,14 +297,63 @@ function ResultCard({
 }
 
 /* ------------------------------------------------------------------ *
+ * Skeletons
+ * ------------------------------------------------------------------ */
+
+function ResultCardSkeleton() {
+  return (
+    <Card className="flex flex-col gap-3">
+      <div className="space-y-2">
+        <Skeleton className="h-5 w-2/3" />
+        <Skeleton className="h-4 w-1/3" />
+      </div>
+      <div className="flex gap-1.5">
+        <Skeleton className="h-5 w-20" />
+        <Skeleton className="h-5 w-16" />
+      </div>
+      <Skeleton className="h-4 w-full" />
+      <div className="flex gap-2">
+        <Skeleton className="h-8 w-16" />
+        <Skeleton className="h-8 w-28" />
+        <Skeleton className="h-8 w-32" />
+      </div>
+    </Card>
+  );
+}
+
+function SavedRowSkeleton() {
+  return (
+    <Card className="flex items-center gap-3">
+      <div className="min-w-0 flex-1 space-y-2">
+        <Skeleton className="h-4 w-1/2" />
+        <Skeleton className="h-3.5 w-1/3" />
+      </div>
+      <Skeleton className="h-5 w-16" />
+      <Skeleton className="h-8 w-36" />
+    </Card>
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * Page
  * ------------------------------------------------------------------ */
 
 export default function JobsPage() {
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
   const [error, setError] = useState("");
   const flash = useCallback((m: string) => {
+    if (!alive.current) return;
     setError(m);
-    window.setTimeout(() => setError(""), 6000);
+    window.setTimeout(() => {
+      if (alive.current) setError("");
+    }, 6000);
   }, []);
 
   const [resumeId, setResumeId] = useState<number | null>(null);
@@ -366,30 +416,34 @@ export default function JobsPage() {
   const loadSaved = useCallback(async () => {
     try {
       const items = await api<SavedJob[]>("/jobs/saved");
-      setSaved(items);
+      if (alive.current) setSaved(items);
     } catch {
       /* 401 handled elsewhere */
     }
   }, []);
 
   useEffect(() => {
+    // Fire each fetch independently so one slow call never blocks the others.
     (async () => {
       try {
         const resumes = await api<{ id: number }[]>("/resumes");
-        if (resumes.length) setResumeId(resumes[0].id);
+        if (alive.current && resumes.length) setResumeId(resumes[0].id);
       } catch {
         /* ignore */
       }
+    })();
+    (async () => {
       try {
         const p = await api<Prefs>("/prefs");
+        if (!alive.current) return;
         setRoles(Array.isArray(p.roles) ? p.roles : []);
         setLocation(p.location || "");
         setSeniority(p.seniority || "");
       } catch {
         /* ignore */
       }
-      loadSaved();
     })();
+    loadSaved();
   }, [loadSaved]);
 
   const runSearch = async () => {
@@ -401,17 +455,19 @@ export default function JobsPage() {
         method: "POST",
         body: { keywords: roles.join(" "), location: location.trim() },
       });
-      const res = await pollJob<{ jobs?: Job[] }>(job_id, (_s, l) =>
-        setSearchStage(l || "Searching..."),
-      );
-      setResults(res.jobs || []);
+      const res = await pollJob<{ jobs?: Job[] }>(job_id, (_s, l) => {
+        if (alive.current) setSearchStage(l || "Searching...");
+      });
+      if (alive.current) setResults(res.jobs || []);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Search failed";
       if (msg !== "unauthorized") flash(msg);
-      setResults([]);
+      if (alive.current) setResults([]);
     } finally {
-      setSearching(false);
-      setSearchStage("");
+      if (alive.current) {
+        setSearching(false);
+        setSearchStage("");
+      }
     }
   };
 
@@ -439,7 +495,7 @@ export default function JobsPage() {
       const msg = e instanceof Error ? e.message : "";
       if (msg && msg !== "unauthorized") flash(msg);
     } finally {
-      setMatchingAll(false);
+      if (alive.current) setMatchingAll(false);
     }
   };
 
@@ -541,9 +597,16 @@ export default function JobsPage() {
 
       {/* Search status / results */}
       {searching && (
-        <div className="flex items-center gap-2 text-sm text-ink-soft">
-          <Spinner size={14} /> {searchStage || "Searching..."}
-        </div>
+        <section className="space-y-4">
+          <div className="flex items-center gap-2 text-sm text-ink-soft">
+            <Spinner size={14} /> {searchStage || "Searching..."}
+          </div>
+          <div className="grid gap-4" aria-hidden="true">
+            <ResultCardSkeleton />
+            <ResultCardSkeleton />
+            <ResultCardSkeleton />
+          </div>
+        </section>
       )}
 
       {sortedResults && !searching && (
@@ -573,13 +636,23 @@ export default function JobsPage() {
       <section className="space-y-4">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-lg font-semibold text-ink">Saved jobs</h2>
-          <Button variant="ghost" size="sm" onClick={matchAll} loading={matchingAll}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={matchAll}
+            loading={matchingAll}
+            disabled={!saved || saved.length === 0}
+          >
             Match all saved
           </Button>
         </div>
 
         {saved === null ? (
-          <p className="text-sm text-ink-faint">Loading saved jobs...</p>
+          <div className="space-y-2" aria-hidden="true">
+            <SavedRowSkeleton />
+            <SavedRowSkeleton />
+            <SavedRowSkeleton />
+          </div>
         ) : saved.length === 0 ? (
           <EmptyState
             title="No saved jobs yet"

@@ -82,6 +82,11 @@ export function Sidebar() {
   const { logout, loading } = useLogout();
   const [open, setOpen] = React.useState(false);
 
+  // Close the mobile sheet on any route change (covers brand link, back/forward).
+  React.useEffect(() => {
+    setOpen(false);
+  }, [pathname]);
+
   const settingsActive = isActive(pathname, "/settings");
 
   const bottom = (onClick?: () => void) => (

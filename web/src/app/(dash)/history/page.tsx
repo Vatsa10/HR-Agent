@@ -1,10 +1,11 @@
 "use client";
 
 import * as React from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { cn, shortDate } from "@/lib/format";
-import { Card, Skeleton, EmptyState, ErrorInline, Button, Spinner } from "@/components/ui";
+import { Card, Skeleton, EmptyState, ErrorInline, Button } from "@/components/ui";
 import { AnalysisResult, type AnalysisResultData } from "@/components/AnalysisResult";
 
 interface HistoryItem {
@@ -21,6 +22,7 @@ interface AnalysisRecord extends AnalysisResultData {
 }
 
 export default function HistoryPage() {
+  const router = useRouter();
   const [items, setItems] = useState<HistoryItem[] | null>(null);
   const [listError, setListError] = useState<string | null>(null);
 
@@ -44,19 +46,28 @@ export default function HistoryPage() {
     };
   }, []);
 
+  const detailToken = useRef(0);
+  useEffect(() => () => {
+    // Invalidate any in-flight detail fetch on unmount.
+    detailToken.current++;
+  }, []);
+
   const open = useCallback(async (id: string) => {
+    const token = ++detailToken.current;
     setSelectedId(id);
     setDetail(null);
     setDetailError(null);
     setDetailLoading(true);
     try {
       const data = await api<AnalysisRecord>(`/analyses/${id}`);
+      if (detailToken.current !== token) return;
       setDetail(data.result || data);
     } catch (e) {
+      if (detailToken.current !== token) return;
       const msg = e instanceof Error ? e.message : "Failed to load analysis";
       if (msg !== "unauthorized") setDetailError(msg);
     } finally {
-      setDetailLoading(false);
+      if (detailToken.current === token) setDetailLoading(false);
     }
   }, []);
 
@@ -81,9 +92,9 @@ export default function HistoryPage() {
           ) : items.length === 0 ? (
             <EmptyState
               title="No analyses yet"
-              hint="Run an analysis and it will show up here."
+              hint="Analyze a candidate and the report will show up here."
               action={
-                <Button onClick={() => (window.location.href = "/analyze")} variant="ghost" size="sm">
+                <Button onClick={() => router.push("/analyze")} variant="ghost" size="sm">
                   Go to Analyze
                 </Button>
               }
@@ -117,8 +128,20 @@ export default function HistoryPage() {
         {/* Detail */}
         <div>
           {detailLoading ? (
-            <Card className="flex items-center justify-center gap-2 py-16 text-sm text-ink-soft">
-              <Spinner size={16} /> Loading analysis
+            <Card className="space-y-5" aria-busy="true" aria-label="Loading analysis">
+              <div className="flex items-end justify-between gap-4 border-b border-line pb-4">
+                <div className="space-y-2">
+                  <Skeleton className="h-3 w-20 rounded" />
+                  <Skeleton className="h-6 w-44 rounded" />
+                </div>
+                <Skeleton className="h-8 w-20 rounded" />
+              </div>
+              <div className="grid gap-5 sm:grid-cols-2">
+                {Array.from({ length: 4 }).map((_, i) => (
+                  <Skeleton key={i} className="h-12 w-full rounded-lg" />
+                ))}
+              </div>
+              <Skeleton className="h-16 w-full rounded-lg" />
             </Card>
           ) : detailError ? (
             <ErrorInline>{detailError}</ErrorInline>

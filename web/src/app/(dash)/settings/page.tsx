@@ -12,7 +12,7 @@ import {
   Label,
   Card,
   Chip,
-  Spinner,
+  Skeleton,
   ErrorInline,
 } from "@/components/ui";
 import { cn } from "@/lib/format";
@@ -108,6 +108,16 @@ function useFlash(): [boolean, () => void] {
   }, []);
   React.useEffect(() => () => { if (t.current) clearTimeout(t.current); }, []);
   return [show, flash];
+}
+
+/* skeleton for a labelled control while a section loads */
+function FieldSkeleton({ className }: { className?: string }) {
+  return (
+    <div className={cn("flex flex-col gap-1.5", className)}>
+      <Skeleton className="h-3.5 w-24" />
+      <Skeleton className="h-10 w-full" />
+    </div>
+  );
 }
 
 /* auto-growing textarea for content blocks */
@@ -304,22 +314,6 @@ export default function SettingsPage() {
 
   /* ---------- render ---------- */
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-24 text-ink-faint">
-        <Spinner size={22} />
-      </div>
-    );
-  }
-
-  if (loadError) {
-    return (
-      <div className="mx-auto max-w-lg py-12">
-        <ErrorInline>{loadError}</ErrorInline>
-      </div>
-    );
-  }
-
   return (
     <div className="mx-auto max-w-2xl">
       <header className="mb-8">
@@ -329,14 +323,24 @@ export default function SettingsPage() {
         </p>
       </header>
 
+      {loadError && (
+        <div className="mb-6">
+          <ErrorInline>{loadError}</ErrorInline>
+        </div>
+      )}
+
       <div className="flex flex-col gap-6">
         {/* Account */}
         <Section title="Account" desc="You are signed in with this email.">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <Field label="Email" className="min-w-[220px] flex-1">
-              <Input value={email} readOnly disabled aria-label="Email" />
+              {loading ? (
+                <Skeleton className="h-10 w-full" />
+              ) : (
+                <Input value={email} readOnly disabled aria-label="Email" />
+              )}
             </Field>
-            <Button variant="ghost" onClick={logout} loading={loggingOut}>
+            <Button variant="ghost" onClick={logout} loading={loggingOut} disabled={loading}>
               Log out
             </Button>
           </div>
@@ -349,12 +353,22 @@ export default function SettingsPage() {
           footer={
             <>
               <SavedFlash show={profileFlash} />
-              <Button onClick={saveProfile} loading={profileSaving}>
+              <Button onClick={saveProfile} loading={profileSaving} disabled={loading}>
                 Save profile
               </Button>
             </>
           }
         >
+          {loading ? (
+            <div className="flex flex-col gap-5">
+              <FieldSkeleton />
+              <div className="grid gap-5 sm:grid-cols-2">
+                <FieldSkeleton />
+                <FieldSkeleton />
+              </div>
+              <Skeleton className="h-24 w-full" />
+            </div>
+          ) : (
           <div className="flex flex-col gap-5">
             {profileErr && <ErrorInline>{profileErr}</ErrorInline>}
 
@@ -472,6 +486,7 @@ export default function SettingsPage() {
               </div>
             </div>
           </div>
+          )}
         </Section>
 
         {/* Job preferences */}
@@ -481,12 +496,21 @@ export default function SettingsPage() {
           footer={
             <>
               <SavedFlash show={prefsFlash} />
-              <Button onClick={savePrefs} loading={prefsSaving}>
+              <Button onClick={savePrefs} loading={prefsSaving} disabled={loading}>
                 Save preferences
               </Button>
             </>
           }
         >
+          {loading ? (
+            <div className="flex flex-col gap-5">
+              <FieldSkeleton />
+              <div className="grid gap-5 sm:grid-cols-2">
+                <FieldSkeleton />
+                <FieldSkeleton />
+              </div>
+            </div>
+          ) : (
           <div className="flex flex-col gap-5">
             {prefsErr && <ErrorInline>{prefsErr}</ErrorInline>}
 
@@ -543,6 +567,7 @@ export default function SettingsPage() {
               </Field>
             </div>
           </div>
+          )}
         </Section>
       </div>
     </div>

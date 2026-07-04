@@ -72,65 +72,84 @@ function Stepper({ stage, running, hasJd }: { stage: string; running: boolean; h
 function DropZone({ file, onFile }: { file: File | null; onFile: (f: File | null) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   const pick = useCallback((f?: File | null) => {
-    if (!f || !f.name.toLowerCase().endsWith(".pdf")) return;
+    if (!f) return;
+    if (!f.name.toLowerCase().endsWith(".pdf")) {
+      setFileError(`"${f.name}" is not a PDF. Upload a .pdf resume.`);
+      return;
+    }
+    setFileError(null);
     onFile(f);
   }, [onFile]);
 
   return (
-    <div
-      role="button"
-      tabIndex={0}
-      aria-label="Upload resume PDF"
-      onClick={() => inputRef.current?.click()}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
+    <div className="space-y-1.5">
+      <div
+        role="button"
+        tabIndex={0}
+        aria-label="Upload resume PDF"
+        aria-invalid={fileError ? true : undefined}
+        onClick={() => inputRef.current?.click()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            inputRef.current?.click();
+          }
+        }}
+        onDragOver={(e) => {
           e.preventDefault();
-          inputRef.current?.click();
-        }
-      }}
-      onDragOver={(e) => {
-        e.preventDefault();
-        setOver(true);
-      }}
-      onDragEnter={(e) => {
-        e.preventDefault();
-        setOver(true);
-      }}
-      onDragLeave={(e) => {
-        e.preventDefault();
-        setOver(false);
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        setOver(false);
-        pick(e.dataTransfer.files?.[0]);
-      }}
-      className={cn(
-        "flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed px-6 py-10 text-center outline-none transition-colors duration-150 [transition-timing-function:var(--ease)]",
-        "focus-visible:ring-[3px] focus-visible:ring-[var(--blue-ring)]",
-        over ? "border-blue bg-blue-soft" : file ? "border-blue/50 bg-surface" : "border-line bg-surface hover:bg-surface-2",
-      )}
-    >
-      <input
-        ref={inputRef}
-        type="file"
-        accept="application/pdf"
-        hidden
-        onChange={(e) => pick(e.target.files?.[0])}
-      />
-      {file ? (
-        <>
-          <span className="font-mono text-sm font-medium text-ink">{file.name}</span>
-          <span className="text-xs text-ink-faint">Click to choose a different file</span>
-        </>
-      ) : (
-        <>
-          <strong className="text-sm font-medium text-ink">Drop the resume PDF here</strong>
-          <span className="text-xs text-ink-faint">or click to browse</span>
-        </>
-      )}
+          setOver(true);
+        }}
+        onDragEnter={(e) => {
+          e.preventDefault();
+          setOver(true);
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          setOver(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setOver(false);
+          pick(e.dataTransfer.files?.[0]);
+        }}
+        className={cn(
+          "flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed px-6 py-10 text-center outline-none transition-colors duration-150 [transition-timing-function:var(--ease)]",
+          "focus-visible:ring-[3px] focus-visible:ring-[var(--blue-ring)]",
+          fileError
+            ? "border-bad bg-surface"
+            : over
+              ? "border-blue bg-blue-soft"
+              : file
+                ? "border-blue/50 bg-surface"
+                : "border-line bg-surface hover:bg-surface-2",
+        )}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept="application/pdf"
+          hidden
+          onChange={(e) => {
+            pick(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
+        {file ? (
+          <>
+            <span className="font-mono text-sm font-medium text-ink">{file.name}</span>
+            <span className="text-xs text-ink-faint">Click to choose a different file</span>
+          </>
+        ) : (
+          <>
+            <strong className="text-sm font-medium text-ink">Drop the resume PDF here</strong>
+            <span className="text-xs text-ink-faint">or click to browse</span>
+          </>
+        )}
+      </div>
+      {fileError && <ErrorInline>{fileError}</ErrorInline>}
     </div>
   );
 }

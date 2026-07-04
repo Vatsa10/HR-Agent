@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, pollJob } from "@/lib/api";
-import { Button, Card, Chip, Input, Field, Select, Textarea, Spinner, EmptyState, ErrorInline } from "@/components/ui";
+import { Button, Card, Chip, Input, Field, Select, Textarea, Spinner, Skeleton, EmptyState, ErrorInline } from "@/components/ui";
 
 /* ------------------------------------------------------------------ *
  * Types
@@ -113,7 +113,7 @@ function Recruiter({
       await navigator.clipboard.writeText(text);
       showFlash("Copied.");
     } catch {
-      /* ignore */
+      onError("Could not copy to clipboard.");
     }
   };
 
@@ -197,17 +197,50 @@ function Recruiter({
             rows={6}
           />
           <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={copy}>
+            <Button variant="ghost" size="sm" onClick={copy} disabled={!subject && !body}>
               Copy
             </Button>
-            <Button variant="ghost" size="sm" onClick={saveDraft}>
+            <Button variant="ghost" size="sm" onClick={saveDraft} disabled={!subject && !body}>
               Save draft
             </Button>
-            {flash && <span className="text-xs text-good">{flash}</span>}
+            {flash && (
+              <span className="text-xs text-good" role="status">
+                {flash}
+              </span>
+            )}
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Skeletons
+ * ------------------------------------------------------------------ */
+
+function RecruiterSkeleton() {
+  return (
+    <div className="rounded-lg border border-line bg-paper p-3">
+      <div className="flex items-center gap-3">
+        <Skeleton className="h-4 w-32" />
+        <Skeleton className="h-3.5 w-40" />
+      </div>
+      <div className="mt-2.5 flex gap-2">
+        <Skeleton className="h-8 w-32" />
+        <Skeleton className="h-8 w-20" />
+        <Skeleton className="h-8 w-28" />
+      </div>
+    </div>
+  );
+}
+
+function CompanyCardSkeleton() {
+  return (
+    <Card className="space-y-3">
+      <Skeleton className="h-5 w-40" />
+      <Skeleton className="h-8 w-24" />
+    </Card>
   );
 }
 
@@ -228,6 +261,13 @@ function CompanyCard({
   const [finding, setFinding] = useState(false);
   const [statusLine, setStatusLine] = useState("");
   const [note, setNote] = useState("");
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const findHr = async () => {
     setFinding(true);
@@ -238,9 +278,10 @@ function CompanyCard({
         method: "POST",
         body: {},
       });
-      const res = await pollJob<{ contacts?: Contact[] }>(job_id, (_s, l) =>
-        setStatusLine(l || "Finding recruiters..."),
-      );
+      const res = await pollJob<{ contacts?: Contact[] }>(job_id, (_s, l) => {
+        if (alive.current) setStatusLine(l || "Finding recruiters...");
+      });
+      if (!alive.current) return;
       const found = res.contacts || [];
       if (!found.length) {
         setNote("No recruiters found. LinkedIn may need a session, or try again later.");
@@ -251,8 +292,10 @@ function CompanyCard({
       const msg = e instanceof Error ? e.message : "Search failed";
       if (msg !== "unauthorized") onError(msg);
     } finally {
-      setFinding(false);
-      setStatusLine("");
+      if (alive.current) {
+        setFinding(false);
+        setStatusLine("");
+      }
     }
   };
 
@@ -285,6 +328,13 @@ function CompanyCard({
 
       {note && <p className="text-sm text-ink-faint">{note}</p>}
 
+      {finding && contacts.length === 0 && (
+        <div className="space-y-2" aria-hidden="true">
+          <RecruiterSkeleton />
+          <RecruiterSkeleton />
+        </div>
+      )}
+
       {contacts.length > 0 && (
         <div className="space-y-2">
           {contacts.map((c) => (
@@ -301,10 +351,21 @@ function CompanyCard({
  * ------------------------------------------------------------------ */
 
 export default function CompaniesPage() {
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
   const [error, setError] = useState("");
   const flash = useCallback((m: string) => {
+    if (!alive.current) return;
     setError(m);
-    window.setTimeout(() => setError(""), 6000);
+    window.setTimeout(() => {
+      if (alive.current) setError("");
+    }, 6000);
   }, []);
 
   const [resumes, setResumes] = useState<Resume[]>([]);
@@ -325,21 +386,24 @@ export default function CompaniesPage() {
   const loadCompanies = useCallback(async () => {
     try {
       const items = await api<Company[]>("/companies");
-      setCompanies(items);
+      if (alive.current) setCompanies(items);
     } catch {
       /* 401 handled elsewhere */
     }
   }, []);
 
   useEffect(() => {
+    // Resumes and the tracked-company list load independently; a slow
+    // /companies call must not delay the Ask panel's resume-backed controls.
     (async () => {
       try {
-        setResumes(await api<Resume[]>("/resumes"));
+        const rs = await api<Resume[]>("/resumes");
+        if (alive.current) setResumes(rs);
       } catch {
-        setResumes([]);
+        if (alive.current) setResumes([]);
       }
-      loadCompanies();
     })();
+    loadCompanies();
   }, [loadCompanies]);
 
   const track = async () => {
@@ -358,7 +422,7 @@ export default function CompaniesPage() {
       const msg = e instanceof Error ? e.message : "";
       if (msg && msg !== "unauthorized") flash(msg);
     } finally {
-      setTracking(false);
+      if (alive.current) setTracking(false);
     }
   };
 
@@ -377,17 +441,20 @@ export default function CompaniesPage() {
         method: "POST",
         body: payload,
       });
-      const res = await pollJob<AskResult>(job_id, (_s, l) =>
-        setAskStatus(l || "Searching LinkedIn..."),
-      );
+      const res = await pollJob<AskResult>(job_id, (_s, l) => {
+        if (alive.current) setAskStatus(l || "Searching LinkedIn...");
+      });
+      if (!alive.current) return;
       setAskResult(res);
       if (companyId) loadCompanies();
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Search failed";
       if (msg !== "unauthorized") flash(msg);
     } finally {
-      setAsking(false);
-      setAskStatus("");
+      if (alive.current) {
+        setAsking(false);
+        setAskStatus("");
+      }
     }
   };
 
@@ -569,7 +636,10 @@ export default function CompaniesPage() {
       <section className="space-y-4">
         <h2 className="text-lg font-semibold text-ink">Tracked companies</h2>
         {companies === null ? (
-          <p className="text-sm text-ink-faint">Loading companies...</p>
+          <div className="grid gap-4" aria-hidden="true">
+            <CompanyCardSkeleton />
+            <CompanyCardSkeleton />
+          </div>
         ) : companies.length === 0 ? (
           <EmptyState
             title="No tracked companies yet"

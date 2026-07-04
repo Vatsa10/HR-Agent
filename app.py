@@ -13,6 +13,7 @@ import logging
 import tempfile
 import threading
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, Request, Response, UploadFile
@@ -32,7 +33,16 @@ from resume_builder import build_resume, json_resume_to_markdown
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="HR-Agent")
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    try:
+        db.init_schema()
+    except Exception:
+        logger.exception("db.init_schema failed; database features unavailable")
+    yield
+
+
+app = FastAPI(title="HR-Agent", lifespan=lifespan)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -52,14 +62,6 @@ COOKIE_KW = dict(
 # ponytail: JSON files, swap for redis/sqlite if this ever runs multi-worker
 JOBS: dict = {}
 JOBS_DIR = Path("cache") / "jobs"
-
-
-@app.on_event("startup")
-def _startup():
-    try:
-        db.init_schema()
-    except Exception:
-        logger.exception("db.init_schema failed; database features unavailable")
 
 
 def current_user(request: Request):
