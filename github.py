@@ -52,15 +52,15 @@ def _fetch_github_api(api_url, params=None):
     response = requests.get(api_url, params, timeout=10, headers=headers)
     status_code = response.status_code
 
-    # Check GitHub rate limit headers
+    # Check GitHub rate limit headers (absent on some responses; don't log noise)
     rate_limit_remaining = response.headers.get("X-RateLimit-Remaining")
     rate_limit_limit = response.headers.get("X-RateLimit-Limit")
     rate_limit_reset = response.headers.get("X-RateLimit-Reset")
-    logger.info(
-        f"{rate_limit_remaining}/{rate_limit_limit}. Reset at {rate_limit_reset}"
-    )
 
     if rate_limit_remaining is not None and rate_limit_limit is not None:
+        logger.debug(
+            f"GitHub rate limit: {rate_limit_remaining}/{rate_limit_limit}, reset {rate_limit_reset}"
+        )
         remaining = int(rate_limit_remaining)
         limit = int(rate_limit_limit)
 
