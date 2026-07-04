@@ -11,6 +11,8 @@ import { Button, Card, Chip, Spinner } from "@/components/ui";
 interface Person {
   name?: string;
   headline?: string;
+  company?: string;
+  location?: string;
   profile_url?: string;
 }
 
@@ -78,6 +80,13 @@ function PersonCard({ person, resumeId }: { person: Person; resumeId: number | n
     }
   };
 
+  // Show company/location only when they add something not already in the headline.
+  const hl = (person.headline || "").toLowerCase();
+  const meta = [person.company, person.location]
+    .map((v) => (v || "").trim())
+    .filter((v) => v && !hl.includes(v.toLowerCase()))
+    .join(" · ");
+
   const onCopy = async () => {
     if (!draft) return;
     const text = (draft.subject ? draft.subject + "\n\n" : "") + draft.body;
@@ -106,6 +115,7 @@ function PersonCard({ person, resumeId }: { person: Person; resumeId: number | n
         )}
       </div>
       {person.headline && <p className="mt-0.5 text-sm text-ink-soft">{person.headline}</p>}
+      {meta && <p className="mt-0.5 text-xs text-ink-faint">{meta}</p>}
 
       <div className="mt-2.5">
         <Button variant="ghost" size="sm" onClick={onDraft} loading={drafting} disabled={!!draft}>
@@ -301,6 +311,10 @@ export default function PeoplePage() {
         <p className="max-w-2xl text-sm leading-relaxed text-ink-soft">
           Describe who you want to reach in plain language and get LinkedIn profiles to cold-email.
           One tap drafts a short, truthful message grounded in a real fact from your resume.
+        </p>
+        <p className="max-w-2xl text-xs text-ink-faint">
+          Results are ranked by LinkedIn. Naming a company (e.g. &ldquo;recruiters at OpenAI&rdquo;)
+          returns that company&rsquo;s people and is more accurate.
         </p>
       </header>
 
