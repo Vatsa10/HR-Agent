@@ -344,6 +344,7 @@ function render(r) {
       <p class="sum">${esc(m.summary)}</p>
       <p class="sum">${esc(m.experience_match)}</p>
       ${m.matching_skills.length ? `<p class="skills-label">Matching skills</p><div class="skills">${m.matching_skills.map(s => `<em>${esc(s)}</em>`).join("")}</div>` : ""}
+      ${(m.bonus_matched || []).length ? `<p class="skills-label">Bonus (nice-to-have) matched</p><div class="skills">${m.bonus_matched.map(s => `<em>${esc(s)}</em>`).join("")}</div>` : ""}
       ${m.missing_skills.length ? `<p class="skills-label">Missing skills</p><div class="skills miss">${m.missing_skills.map(s => `<em>${esc(s)}</em>`).join("")}</div>` : ""}
     </div></section>`);
   }

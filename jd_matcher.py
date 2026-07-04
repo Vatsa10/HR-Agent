@@ -23,7 +23,12 @@ class JDMatchResult(BaseModel):
 
     fit_score: float = Field(ge=0, le=100, description="Overall fit score 0-100")
     matching_skills: list[str] = Field(default_factory=list)
-    missing_skills: list[str] = Field(default_factory=list)
+    missing_skills: list[str] = Field(
+        default_factory=list, description="Missing MUST-HAVE requirements only"
+    )
+    bonus_matched: list[str] = Field(
+        default_factory=list, description="Nice-to-have/bonus JD items the candidate has"
+    )
     experience_match: str = Field(description="How experience aligns with the JD")
     verdict: str = Field(description="One of: strong_fit, moderate_fit, weak_fit")
     summary: str = Field(description="2-3 sentence recruiter-facing summary")
@@ -73,6 +78,16 @@ def fetch_jd_from_url(url: str, timeout: int = 15) -> str:
 
 JD_MATCH_PROMPT = """You are an expert technical recruiter. Compare the candidate's resume against the job description and produce a rigorous, evidence-based fit assessment.
 
+First, understand the JD's own priorities. Classify every requirement:
+- MUST-HAVE: listed as required, essential, or clearly core to the role.
+- NICE-TO-HAVE: phrased as "bonus points", "nice to have", "preferred", "a plus", "good to know", or similar optional language.
+
+Scoring rules:
+- fit_score is driven by MUST-HAVE coverage and relevant experience depth (up to ~90 points).
+- Matched NICE-TO-HAVE items add a small boost (up to ~10 points total).
+- A missing NICE-TO-HAVE must NEVER reduce the score or appear in missing_skills.
+- missing_skills lists ONLY unmet MUST-HAVE requirements.
+
 JOB DESCRIPTION:
 {jd_text}
 
@@ -82,8 +97,9 @@ CANDIDATE RESUME:
 Respond ONLY with valid JSON:
 {{
   "fit_score": <0-100 number>,
-  "matching_skills": ["skill", ...],
-  "missing_skills": ["skill", ...],
+  "matching_skills": ["matched must-have skill", ...],
+  "missing_skills": ["unmet must-have requirement", ...],
+  "bonus_matched": ["matched nice-to-have/bonus item", ...],
   "experience_match": "<how the candidate's experience aligns>",
   "verdict": "<strong_fit | moderate_fit | weak_fit>",
   "summary": "<2-3 sentence recruiter-facing summary>"
