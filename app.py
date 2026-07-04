@@ -437,13 +437,23 @@ async def api_build(request: Request):
         logger.exception("analysis lookup failed; building without jd match")
 
     # LinkedIn is secondary context (like GitHub), never the main resume.
+    # Prefer an already-imported LinkedIn profile (instant); fall back to a
+    # live URL fetch only if no import is selected.
     linkedin_text = None
-    linkedin_url = (user.get("extras") or {}).get("linkedin_url")
-    if linkedin_url:
+    extras_cfg = user.get("extras") or {}
+    li_resume_id = extras_cfg.get("linkedin_resume_id")
+    if li_resume_id:
+        li_row = db.get_resume(int(li_resume_id), user["id"])
+        if li_row and li_row.get("parsed"):
+            try:
+                linkedin_text = json_resume_to_markdown(li_row["parsed"]) or None
+            except Exception:
+                logger.exception("linkedin resume render failed")
+    if not linkedin_text and extras_cfg.get("linkedin_url"):
         try:
             import linkedin_service
 
-            secs = linkedin_service.profile_sections(linkedin_url).get("sections", {})
+            secs = linkedin_service.profile_sections(extras_cfg["linkedin_url"]).get("sections", {})
             linkedin_text = "\n\n".join(f"## {k}\n{v}" for k, v in secs.items() if v) or None
         except Exception:
             logger.exception("linkedin fetch failed; building without linkedin context")

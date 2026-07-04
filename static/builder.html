@@ -21,9 +21,11 @@
       <input type="url" id="github" placeholder="https://github.com/you">
       <p class="hint">The GitHub Scout folds in real repository evidence the resume is missing.</p>
 
-      <label for="linkedin" style="margin-top:18px;">LinkedIn URL <span style="color:var(--ink-faint);font-weight:400;">(secondary)</span></label>
-      <input type="url" id="linkedin" placeholder="https://www.linkedin.com/in/you">
-      <p class="hint">Used only to recover a bullet, date, or skill the resume left out.</p>
+      <label for="linkedin-sel" style="margin-top:18px;">LinkedIn profile <span style="color:var(--ink-faint);font-weight:400;">(secondary)</span></label>
+      <select id="linkedin-sel"><option value="">None</option></select>
+      <p class="hint">Pick an imported LinkedIn profile to enrich from (instant, no re-scrape). Import one on the LinkedIn page.</p>
+      <input type="url" id="linkedin" placeholder="or paste https://www.linkedin.com/in/you" style="margin-top:8px;">
+      <p class="hint">Fallback: fetch a profile URL live if none imported.</p>
 
       <label style="margin-top:18px;">Your content</label>
       <p class="hint" style="margin:0 0 10px;">Blocks of extra material the builder can draw on: certifications, publications, talks, anything not in the PDF.</p>
@@ -121,6 +123,7 @@
     $("github").value = me.github_url || "";
     const extras = me.extras || {};
     $("linkedin").value = extras.linkedin_url || "";
+    if (extras.linkedin_resume_id) $("linkedin-sel").value = String(extras.linkedin_resume_id);
     $("blocks").innerHTML = "";
     if (Array.isArray(extras.blocks)) {
       extras.blocks.forEach(b => addBlock(b.title || "", b.body || ""));
@@ -138,7 +141,7 @@
       await api("/api/me", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ github_url: $("github").value.trim(), extras: { blocks: readBlocks(), linkedin_url: $("linkedin").value.trim() } }),
+        body: JSON.stringify({ github_url: $("github").value.trim(), extras: { blocks: readBlocks(), linkedin_url: $("linkedin").value.trim(), linkedin_resume_id: $("linkedin-sel").value || null } }),
       });
       $("profile-saved").classList.remove("hidden");
       setTimeout(() => $("profile-saved").classList.add("hidden"), 2500);
@@ -157,6 +160,9 @@
     }
     $("jd-sel").innerHTML = '<option value="">None (general polish)</option>' +
       jds.map(j => `<option value="${j.id}">${esc(j.source_url || j.snippet || ("JD #" + j.id))}</option>`).join("");
+    const linkedinResumes = resumes.filter(r => (r.filename || "").startsWith("LinkedIn:"));
+    $("linkedin-sel").innerHTML = '<option value="">None</option>' +
+      linkedinResumes.map(r => `<option value="${r.id}">${esc(r.filename)}</option>`).join("");
   }
 
   function showNotes(notes) {
