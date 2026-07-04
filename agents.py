@@ -119,7 +119,17 @@ def jd_agent(state: PipelineState) -> PipelineState:
         if not state.get("jd_text") and state.get("jd_url"):
             from jd_matcher import fetch_jd_from_url
 
-            state["jd_text"] = fetch_jd_from_url(state["jd_url"])
+            jd_url = state["jd_url"]
+            jd_text = None
+            if "linkedin.com/jobs" in jd_url:
+                try:
+                    import linkedin_importer
+
+                    if linkedin_importer.has_session():
+                        jd_text = linkedin_importer.import_job(jd_url)
+                except Exception as e:
+                    logger.warning(f"LinkedIn JD scrape failed, falling back: {e}")
+            state["jd_text"] = jd_text or fetch_jd_from_url(jd_url)
         state["jd_match"] = match_resume_to_jd(
             resume_text=state["resume_text"],
             jd_text=state.get("jd_text"),

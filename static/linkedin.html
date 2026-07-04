@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HR-Agent · LinkedIn Import</title>
+<link rel="stylesheet" href="/static/css/app.css">
+<style>
+  .status-row { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 550; }
+  .status-dot { width: 10px; height: 10px; border-radius: 50%; flex: none; background: var(--ink-faint); }
+  .status-dot.good { background: var(--good); }
+  .setup ol { padding-left: 20px; margin-top: 10px; color: var(--ink-soft); font-size: 14px; }
+  .setup li { margin-bottom: 12px; }
+  .setup code {
+    display: block; margin-top: 6px; padding: 8px 12px; border-radius: 8px;
+    background: var(--paper); border: 1px solid var(--line);
+    font: 12.5px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+    color: var(--ink); user-select: all; overflow-x: auto;
+  }
+  .summary-name { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; }
+  .counts { display: flex; gap: 24px; margin-top: 12px; flex-wrap: wrap; }
+  .counts div b { display: block; font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .counts div span { font-size: 12.5px; color: var(--ink-faint); }
+  .actions { display: flex; gap: 10px; align-items: center; margin-top: 18px; flex-wrap: wrap; }
+  .actions a.ghost { text-decoration: none; display: inline-block; }
+  .actions a.ghost:focus-visible { outline: none; box-shadow: 0 0 0 3px oklch(52% 0.15 258 / 0.3); }
+  #result { opacity: 0; transform: translateY(8px); animation: rise 320ms var(--ease-out) forwards; }
+</style>
+</head>
+<body>
+<div id="nav"></div>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/nav.js"></script>
+
+<main style="max-width:720px;margin:0 auto;padding:56px 24px 96px;">
+  <header style="margin-bottom:36px;">
+    <h1 style="font-size:21px;font-weight:650;letter-spacing:-0.01em;">LinkedIn Import</h1>
+    <p style="color:var(--ink-soft);margin-top:6px;max-width:58ch;">Import your LinkedIn profile as a resume source. Scraping runs locally with your own logged-in session, nothing is shared.</p>
+  </header>
+
+  <div class="box" id="status-box">
+    <h2>Session</h2>
+    <div class="status-row" id="status-row"><span class="status-dot"></span><span id="status-text">Checking session...</span></div>
+    <div class="setup hidden" id="setup">
+      <p class="hint" style="margin-top:12px;">No LinkedIn session found. Set one up once:</p>
+      <ol>
+        <li>Everything is already installed. In the project folder, run:
+          <code>python linkedin_scraper/samples/create_session.py</code></li>
+        <li>Log in to LinkedIn inside the browser window that opens.</li>
+        <li>The session saves to <code style="display:inline;padding:2px 6px;">linkedin_session.json</code> in the project root. Keep this file private, it is your login.</li>
+      </ol>
+      <button class="ghost" id="refresh" type="button">Refresh status</button>
+    </div>
+  </div>
+
+  <form id="form">
+    <label for="url">Profile URL</label>
+    <input type="url" id="url" placeholder="https://www.linkedin.com/in/your-handle/" autocomplete="off">
+    <p class="hint">Public profile URLs look like linkedin.com/in/your-handle.</p>
+    <button class="run" id="run" type="submit" disabled>Import profile</button>
+  </form>
+
+  <div id="pipeline" class="hidden" style="margin-top:28px;">
+    <div class="step active"><span class="dot"></span>Scraping profile via your session</div>
+  </div>
+
+  <div id="error" class="error hidden"></div>
+
+  <div class="box hidden" id="result" style="margin-top:28px;">
+    <h2>Imported</h2>
+    <p class="summary-name" id="res-name"></p>
+    <div class="counts">
+      <div><b id="c-work">0</b><span>work entries</span></div>
+      <div><b id="c-edu">0</b><span>education</span></div>
+      <div><b id="c-skills">0</b><span>skills</span></div>
+    </div>
+    <div class="actions">
+      <a class="ghost" href="/builder.html">Open Builder</a>
+      <span class="hint" style="margin:0;">Or analyze it: the profile now appears in your saved resumes.</span>
+    </div>
+  </div>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  const { api, authFetch, esc } = window.HR;
+  const $ = id => document.getElementById(id);
+
+  let sessionOk = false;
+
+  function validUrl(v) { return /linkedin\.com\/in\//.test(v.trim()); }
+
+  function updateRun() {
+    $("run").disabled = !(sessionOk && validUrl($("url").value));
+  }
+  $("url").addEventListener("input", updateRun);
+
+  function showSetup(show) { $("setup").classList.toggle("hidden", !show); }
+
+  async function checkStatus() {
+    const dot = document.querySelector(".status-dot");
+    try {
+      const s = await api("/api/linkedin/status");
+      sessionOk = !!s.session;
+    } catch (e) {
+      sessionOk = false;
+    }
+    dot.classList.toggle("good", sessionOk);
+    $("status-text").textContent = sessionOk ? "Session ready" : "No session found";
+    showSetup(!sessionOk);
+    updateRun();
+  }
+  $("refresh") && $("refresh").addEventListener("click", checkStatus);
+
+  function showError(msg) {
+    $("pipeline").classList.add("hidden");
+    const el = $("error");
+    el.textContent = "Import failed: " + msg;
+    el.classList.remove("hidden");
+    if (/session not found/i.test(msg)) { sessionOk = false; document.querySelector(".status-dot").classList.remove("good"); $("status-text").textContent = "No session found"; showSetup(true); updateRun(); }
+  }
+
+  $("form").addEventListener("submit", async e => {
+    e.preventDefault();
+    if ($("run").disabled) return;
+    $("run").disabled = true;
+    $("error").classList.add("hidden");
+    $("result").classList.add("hidden");
+    $("pipeline").classList.remove("hidden");
+    try {
+      const res = await authFetch("/api/import/linkedin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: $("url").value.trim() }),
+      });
+      const { job_id, error, detail } = await res.json();
+      if (error || detail) throw new Error(error || detail);
+      await poll(job_id);
+    } catch (err) {
+      if (err.message !== "unauthorized") showError(err.message);
+    } finally {
+      updateRun();
+    }
+  });
+
+  async function poll(jobId) {
+    while (true) {
+      const res = await authFetch("/api/jobs/" + jobId);
+      const job = await res.json();
+      if (job.status === "done") {
+        $("pipeline").classList.add("hidden");
+        const r = job.result || {};
+        const s = r.parsed_summary || {};
+        $("res-name").textContent = r.candidate || "Unnamed profile";
+        $("c-work").textContent = s.work || 0;
+        $("c-edu").textContent = s.education || 0;
+        $("c-skills").textContent = s.skills || 0;
+        const box = $("result");
+        box.classList.remove("hidden");
+        box.style.animation = "none";
+        void box.offsetWidth;
+        box.style.animation = "";
+        return;
+      }
+      if (job.status === "error") return showError(job.error || "Unknown error");
+      await new Promise(r => setTimeout(r, 1200));
+    }
+  }
+
+  checkStatus();
+})();
+</script>
+</body>
+</html>

@@ -88,6 +88,7 @@ STAGE_LABELS = {
     "github": "GitHub Agent scouting repositories",
     "jd": "JD Agent matching the job description",
     "evaluate": "Evaluator Agent scoring the candidate",
+    "linkedin": "LinkedIn Agent importing the profile",
 }
 
 
@@ -250,6 +251,70 @@ async def analyze(
     return {"job_id": job_id}
 
 
+def _run_linkedin_import(job_id: str, profile_url: str, user_id: int):
+    job = JOBS[job_id]
+    try:
+        import linkedin_importer
+        from models import JSONResume
+
+        parsed = linkedin_importer.import_profile(profile_url)
+        JSONResume(**parsed)  # validate shape
+        name = (parsed.get("basics") or {}).get("name") or "Unknown"
+        resume_id = db.save_resume(
+            user_id,
+            "LinkedIn: " + name,
+            hashlib.sha256(profile_url.encode("utf-8")).hexdigest(),
+            parsed,
+        )
+        job["result"] = {
+            "resume_id": resume_id,
+            "candidate": name,
+            "parsed_summary": {
+                "work": len(parsed.get("work") or []),
+                "education": len(parsed.get("education") or []),
+                "skills": len(parsed.get("skills") or []),
+                "projects": len(parsed.get("projects") or []),
+            },
+        }
+        job["status"] = "done"
+    except Exception as e:
+        logger.exception("LinkedIn import failed")
+        job["status"] = "error"
+        job["error"] = str(e)
+    _persist_job(job_id, job)
+
+
+@app.get("/api/linkedin/status")
+async def api_linkedin_status(request: Request):
+    if not current_user(request):
+        return _unauth()
+    import linkedin_importer
+
+    return {"session": linkedin_importer.has_session()}
+
+
+@app.post("/api/import/linkedin")
+async def api_import_linkedin(request: Request):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    body = await request.json()
+    profile_url = (body.get("profile_url") or body.get("url") or "").strip()
+    if "linkedin.com/in/" not in profile_url:
+        return JSONResponse(
+            {"error": "Provide a LinkedIn profile URL (linkedin.com/in/...)"},
+            status_code=400,
+        )
+    job_id = uuid.uuid4().hex
+    JOBS[job_id] = {"status": "running", "stage": "linkedin"}
+    threading.Thread(
+        target=_run_linkedin_import,
+        args=(job_id, profile_url, user["id"]),
+        daemon=True,
+    ).start()
+    return {"job_id": job_id}
+
+
 @app.get("/api/jobs/{job_id}")
 async def job_status(request: Request, job_id: str):
     if not current_user(request):
@@ -403,6 +468,13 @@ async def builder_page(request: Request):
     if not current_user(request):
         return RedirectResponse("/login.html", status_code=302)
     return FileResponse(STATIC_DIR / "builder.html")
+
+
+@app.get("/linkedin.html")
+async def linkedin_page(request: Request):
+    if not current_user(request):
+        return RedirectResponse("/login.html", status_code=302)
+    return FileResponse(STATIC_DIR / "linkedin.html")
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

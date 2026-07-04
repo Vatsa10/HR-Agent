@@ -10,6 +10,7 @@
     const links = [
       { href: "/", label: "Analyze", match: ["/", "/index.html"] },
       { href: "/builder.html", label: "Builder", match: ["/builder.html"] },
+      { href: "/linkedin.html", label: "LinkedIn", match: ["/linkedin.html"] },
     ];
     const path = location.pathname;
     mount.innerHTML =
