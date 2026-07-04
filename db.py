@@ -21,7 +21,20 @@ DATABASE_URL = os.environ.get("DATABASE_URL", "")
 try:
     from psycopg_pool import ConnectionPool
 
-    _pool = ConnectionPool(DATABASE_URL, min_size=1, max_size=5, open=True)
+    # Neon (serverless) closes idle connections, so a pooled connection can be
+    # dead by the time we use it (SSL closed unexpectedly). We proactively
+    # recycle idle connections (max_idle) and cap connection age (max_lifetime)
+    # so most are fresh. We deliberately do NOT use check= on checkout: it runs
+    # a SELECT 1 every query, an extra ~network round-trip that hurts latency.
+    # The rare dead connection is handled by the retry-once wrapper below.
+    _pool = ConnectionPool(
+        DATABASE_URL,
+        min_size=1,
+        max_size=5,
+        open=True,
+        max_idle=60.0,
+        max_lifetime=600.0,
+    )
 
     def _connect():
         return _pool.connection()
@@ -129,23 +142,39 @@ def init_schema():
         conn.execute(SCHEMA)
 
 
+def _retry(op):
+    """Run a DB op, retrying once if the pooled connection was closed by Neon
+    (idle drop). The failed connection is discarded by the pool on error, so
+    the retry gets a fresh one. Happy path pays nothing."""
+    try:
+        return op()
+    except psycopg.OperationalError:
+        return op()
+
+
 def _one(sql, params=()):
-    with _connect() as conn:
-        with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(sql, params)
-            return cur.fetchone()
+    def op():
+        with _connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, params)
+                return cur.fetchone()
+    return _retry(op)
 
 
 def _all(sql, params=()):
-    with _connect() as conn:
-        with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(sql, params)
-            return cur.fetchall()
+    def op():
+        with _connect() as conn:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql, params)
+                return cur.fetchall()
+    return _retry(op)
 
 
 def _exec(sql, params=()):
-    with _connect() as conn:
-        conn.execute(sql, params)
+    def op():
+        with _connect() as conn:
+            conn.execute(sql, params)
+    return _retry(op)
 
 
 # ---------------- users ----------------
