@@ -17,7 +17,6 @@ import {
   Skeleton,
   EmptyState,
   ErrorInline,
-  StatusDot,
 } from "@/components/ui";
 
 /* ------------------------------------------------------------------ *
@@ -28,6 +27,7 @@ interface Prefs {
   roles: string[];
   location: string;
   seniority: string;
+  work_type?: string;
 }
 
 interface Job {
@@ -65,7 +65,42 @@ interface JdMatch {
   missing_skills?: string[];
 }
 
-const SENIORITY = ["", "internship", "entry", "mid", "senior", "lead"];
+const WORK_TYPES = [
+  { value: "", label: "Any" },
+  { value: "remote", label: "Remote" },
+  { value: "on_site", label: "On-site" },
+  { value: "hybrid", label: "Hybrid" },
+];
+
+const EXPERIENCE = [
+  { value: "", label: "Any" },
+  { value: "internship", label: "Internship" },
+  { value: "entry", label: "Entry" },
+  { value: "associate", label: "Associate" },
+  { value: "mid_senior", label: "Mid-Senior" },
+  { value: "director", label: "Director" },
+  { value: "executive", label: "Executive" },
+];
+
+// Map a stored seniority value (which may be a legacy label) onto an experience
+// token so the prefilled Select lands on a valid option.
+const SENIORITY_TO_EXPERIENCE: Record<string, string> = {
+  internship: "internship",
+  entry: "entry",
+  associate: "associate",
+  mid_senior: "mid_senior",
+  director: "director",
+  executive: "executive",
+  junior: "entry",
+  mid: "mid_senior",
+  senior: "mid_senior",
+  lead: "director",
+  exec: "executive",
+};
+function seniorityToExperience(seniority: string): string {
+  return SENIORITY_TO_EXPERIENCE[(seniority || "").trim().toLowerCase()] ?? "";
+}
+
 const STATUSES = ["saved", "applied", "interviewing", "offer", "rejected", "archived"];
 
 const MARK_COLOR: Record<string, string> = {
@@ -355,13 +390,12 @@ export default function JobsPage() {
 
   const [resumeId, setResumeId] = useState<number | null>(null);
 
-  // prefs
+  // filters (prefilled from prefs, applied to this search only)
   const [roles, setRoles] = useState<string[]>([]);
   const [roleInput, setRoleInput] = useState("");
   const [location, setLocation] = useState("");
-  const [seniority, setSeniority] = useState("");
-  const [prefsSaved, setPrefsSaved] = useState(false);
-  const saveTimer = useRef<number | null>(null);
+  const [workType, setWorkType] = useState("");
+  const [experience, setExperience] = useState("");
 
   // search
   const [searching, setSearching] = useState(false);
@@ -372,42 +406,14 @@ export default function JobsPage() {
   const [saved, setSaved] = useState<SavedJob[] | null>(null);
   const [matchingAll, setMatchingAll] = useState(false);
 
-  const savePrefs = useCallback(
-    (next: Partial<Prefs>) => {
-      const payload: Prefs = {
-        roles: next.roles ?? roles,
-        location: next.location ?? location,
-        seniority: next.seniority ?? seniority,
-      };
-      if (saveTimer.current) window.clearTimeout(saveTimer.current);
-      saveTimer.current = window.setTimeout(async () => {
-        try {
-          await api("/prefs", { method: "PUT", body: payload });
-          setPrefsSaved(true);
-          window.setTimeout(() => setPrefsSaved(false), 1800);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : "";
-          if (msg && msg !== "unauthorized") flash(msg);
-        }
-      }, 500);
-    },
-    [roles, location, seniority, flash],
-  );
-
   const addRole = (raw: string) => {
     const v = raw.trim();
-    if (v && !roles.includes(v)) {
-      const next = [...roles, v];
-      setRoles(next);
-      savePrefs({ roles: next });
-    }
+    if (v && !roles.includes(v)) setRoles((cur) => [...cur, v]);
     setRoleInput("");
   };
 
   const removeRole = (i: number) => {
-    const next = roles.filter((_, idx) => idx !== i);
-    setRoles(next);
-    savePrefs({ roles: next });
+    setRoles((cur) => cur.filter((_, idx) => idx !== i));
   };
 
   const loadSaved = useCallback(async () => {
@@ -435,7 +441,8 @@ export default function JobsPage() {
         if (!alive.current) return;
         setRoles(Array.isArray(p.roles) ? p.roles : []);
         setLocation(p.location || "");
-        setSeniority(p.seniority || "");
+        setWorkType(p.work_type || "");
+        setExperience(seniorityToExperience(p.seniority || ""));
       } catch {
         /* ignore */
       }
@@ -448,9 +455,14 @@ export default function JobsPage() {
     setResults(null);
     setSearchStage("Starting search...");
     try {
+      const body: Record<string, string> = { keywords: roles.join(" ").trim() };
+      const loc = location.trim();
+      if (loc) body.location = loc;
+      if (workType) body.work_type = workType;
+      if (experience) body.experience_level = experience;
       const { job_id } = await api<{ job_id: string }>("/jobs/search", {
         method: "POST",
-        body: { keywords: roles.join(" "), location: location.trim() },
+        body,
       });
       const res = await pollJob<{ jobs?: Job[] }>(job_id, (_s, l) => {
         if (alive.current) setSearchStage(l || "Searching...");
@@ -512,7 +524,7 @@ export default function JobsPage() {
 
       {/* Prefs bar */}
       <Card className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-[2fr_1.4fr_1fr]">
+        <div className="space-y-4">
           <Field label="Roles" hint="Enter to add">
             <div className="flex min-h-10 flex-wrap items-center gap-1.5 rounded-lg border border-line bg-surface px-2 py-1.5">
               {roles.map((r, i) => (
@@ -550,43 +562,43 @@ export default function JobsPage() {
             </div>
           </Field>
 
-          <Field label="Location">
-            <Input
-              value={location}
-              onChange={(e) => setLocation(e.target.value)}
-              onBlur={() => savePrefs({ location })}
-              placeholder="Bengaluru, Remote..."
-            />
-          </Field>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Field label="Location">
+              <Input
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                placeholder="Bengaluru, Remote..."
+              />
+            </Field>
 
-          <Field label="Seniority">
-            <Select
-              value={seniority}
-              onChange={(e) => {
-                setSeniority(e.target.value);
-                savePrefs({ seniority: e.target.value });
-              }}
-            >
-              {SENIORITY.map((s) => (
-                <option key={s} value={s}>
-                  {s ? s[0].toUpperCase() + s.slice(1) : "Any"}
-                </option>
-              ))}
-            </Select>
-          </Field>
+            <Field label="Work type">
+              <Select value={workType} onChange={(e) => setWorkType(e.target.value)}>
+                {WORK_TYPES.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            <Field label="Experience">
+              <Select value={experience} onChange={(e) => setExperience(e.target.value)}>
+                {EXPERIENCE.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
         </div>
 
         <div className="flex items-center gap-3">
           <Button onClick={runSearch} loading={searching}>
             Search jobs
           </Button>
-          {prefsSaved && (
-            <span className="flex items-center gap-1.5 text-xs text-good">
-              <StatusDot tone="good" /> Preferences saved
-            </span>
-          )}
           <span className="ml-auto text-xs text-ink-faint">
-            Manage defaults in{" "}
+            These come from your preferences. Edit defaults in{" "}
             <a href="/settings" className="text-blue hover:underline">
               Settings
             </a>

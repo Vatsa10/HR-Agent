@@ -563,16 +563,71 @@ async def api_set_prefs(request: Request):
         "roles": [str(r).strip() for r in roles if str(r).strip()],
         "location": (body.get("location") or "").strip(),
         "seniority": (body.get("seniority") or "").strip(),
+        "work_type": (body.get("work_type") or "").strip(),
     }
     return db.set_job_prefs(user["id"], prefs)
 
 
 # ---------------- job search ----------------
 
-def _run_job_search(job_id: str, keywords: str, location: str, user_id: int):
+_EXPERIENCE_TOKENS = {
+    "internship", "entry", "associate", "mid_senior", "director", "executive",
+}
+
+# Best-effort mapping of common seniority labels onto experience_level tokens.
+# A value that is already a token passes through unchanged; an unrecognised
+# value is passed through as-is (the extractor simply ignores what it can't use).
+_SENIORITY_TO_EXPERIENCE = {
+    "intern": "internship",
+    "internship": "internship",
+    "entry": "entry",
+    "entry-level": "entry",
+    "entry level": "entry",
+    "junior": "entry",
+    "associate": "associate",
+    "mid": "mid_senior",
+    "mid-senior": "mid_senior",
+    "mid_senior": "mid_senior",
+    "mid-senior level": "mid_senior",
+    "senior": "mid_senior",
+    "director": "director",
+    "lead": "director",
+    "executive": "executive",
+    "exec": "executive",
+}
+
+
+def _resolve_experience(body_value, seniority):
+    """experience_level from the request body, else derived from stored seniority.
+
+    If seniority is already an experience token it is used directly; otherwise a
+    known label is mapped to a token, and anything else is passed through. Empty
+    on both sides yields None (no filter)."""
+    v = (body_value or "").strip()
+    if v:
+        return v
+    s = (seniority or "").strip()
+    if not s:
+        return None
+    key = s.lower()
+    if key in _EXPERIENCE_TOKENS:
+        return key
+    return _SENIORITY_TO_EXPERIENCE.get(key, s)
+
+
+def _run_job_search(job_id: str, keywords: str, location: str, user_id: int,
+                    work_type: str = None, experience_level: str = None,
+                    job_type: str = None, date_posted: str = None):
     job = JOBS[job_id]
     try:
-        jobs = job_search.search(keywords, location or None)
+        jobs = job_search.search(
+            keywords,
+            location=location or None,
+            work_type=work_type or None,
+            experience_level=experience_level or None,
+            job_type=job_type or None,
+            date_posted=date_posted or None,
+        )
         try:
             seen_ids = db.saved_job_ids(user_id)
         except Exception:
@@ -621,8 +676,15 @@ async def api_jobs_search(request: Request):
         return _unauth()
     body = await request.json()
     prefs = db.get_job_prefs(user["id"])
+    # Resolve each filter from the request body, falling back to stored prefs.
+    # Empty/absent values collapse to None so the extractor applies no filter.
     keywords = (body.get("keywords") or " ".join(prefs.get("roles") or [])).strip()
-    location = (body.get("location") or prefs.get("location") or "").strip()
+    location = (body.get("location") or prefs.get("location") or "").strip() or None
+    work_type = (body.get("work_type") or prefs.get("work_type") or "").strip() or None
+    job_type = (body.get("job_type") or prefs.get("job_type") or "").strip() or None
+    experience_level = _resolve_experience(
+        body.get("experience_level"), prefs.get("seniority")
+    )
     if not keywords:
         return JSONResponse({"error": "Provide keywords or set roles in preferences"}, status_code=400)
     job_id = uuid.uuid4().hex
@@ -630,6 +692,11 @@ async def api_jobs_search(request: Request):
     threading.Thread(
         target=_run_job_search,
         args=(job_id, keywords, location, user["id"]),
+        kwargs={
+            "work_type": work_type,
+            "experience_level": experience_level,
+            "job_type": job_type,
+        },
         daemon=True,
     ).start()
     return {"job_id": job_id}

@@ -176,9 +176,34 @@ def profile_sections(profile_url_or_username: str, sections=None) -> dict:
     return _run(lambda ext: ext.scrape_person(username, want))
 
 
-def search_jobs(keywords: str, location: str = None, limit: int = 25) -> dict:
-    """Search LinkedIn jobs. Returns {job_ids, references, sections}."""
-    return _run(lambda ext: ext.search_jobs(keywords=keywords, location=location))
+def search_jobs(
+    keywords: str,
+    location: str = None,
+    work_type: str = None,
+    experience_level: str = None,
+    job_type: str = None,
+    date_posted: str = None,
+    limit: int = 25,
+) -> dict:
+    """Search LinkedIn jobs. Returns {job_ids, references, sections}.
+
+    Optional filters map straight onto the extractor's search_jobs tokens:
+    - work_type: "on_site" | "remote" | "hybrid" (comma-separated allowed)
+    - experience_level: internship|entry|associate|mid_senior|director|executive
+    - job_type: full_time|part_time|contract|temporary|internship|volunteer|other
+    - date_posted: past_hour|past_24_hours|past_week|past_month
+    A None/empty filter is omitted so the extractor applies no constraint.
+    """
+    return _run(
+        lambda ext: ext.search_jobs(
+            keywords=keywords,
+            location=location,
+            work_type=work_type,
+            experience_level=experience_level,
+            job_type=job_type,
+            date_posted=date_posted,
+        )
+    )
 
 
 def search_people(keywords: str, location: str = None, current_company: str = None) -> dict:

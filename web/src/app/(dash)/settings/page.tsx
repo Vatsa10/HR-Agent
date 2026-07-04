@@ -39,16 +39,40 @@ interface Prefs {
   roles?: string[];
   location?: string;
   seniority?: string;
+  work_type?: string;
 }
 
 const SENIORITY = [
   { value: "", label: "Any" },
   { value: "internship", label: "Internship" },
   { value: "entry", label: "Entry" },
-  { value: "mid", label: "Mid" },
-  { value: "senior", label: "Senior" },
-  { value: "lead", label: "Lead" },
+  { value: "associate", label: "Associate" },
+  { value: "mid_senior", label: "Mid-Senior" },
+  { value: "director", label: "Director" },
+  { value: "executive", label: "Executive" },
 ];
+
+const WORK_TYPES = [
+  { value: "", label: "Any" },
+  { value: "remote", label: "Remote" },
+  { value: "on_site", label: "On-site" },
+  { value: "hybrid", label: "Hybrid" },
+];
+
+// Older prefs may store legacy seniority labels (mid/senior/lead...). Map them
+// onto the experience tokens above so the Select lands on a valid option.
+const SENIORITY_ALIAS: Record<string, string> = {
+  mid: "mid_senior",
+  senior: "mid_senior",
+  junior: "entry",
+  lead: "director",
+  exec: "executive",
+};
+function normalizeSeniority(v: string): string {
+  const s = (v || "").trim().toLowerCase();
+  if (SENIORITY.some((o) => o.value === s)) return s;
+  return SENIORITY_ALIAS[s] ?? "";
+}
 
 /* ------------------------------------------------------------------ *
  * Shared section shell
@@ -170,6 +194,7 @@ export default function SettingsPage() {
   const [roleInput, setRoleInput] = React.useState("");
   const [location, setLocation] = React.useState("");
   const [seniority, setSeniority] = React.useState("");
+  const [workType, setWorkType] = React.useState("");
   const [prefsSaving, setPrefsSaving] = React.useState(false);
   const [prefsErr, setPrefsErr] = React.useState<string | null>(null);
   const [prefsFlash, flashPrefs] = useFlash();
@@ -221,7 +246,8 @@ export default function SettingsPage() {
         setResumes(Array.isArray(res) ? res : []);
         setRoles(Array.isArray(prefs.roles) ? prefs.roles : []);
         setLocation(prefs.location || "");
-        setSeniority(prefs.seniority || "");
+        setSeniority(normalizeSeniority(prefs.seniority || ""));
+        setWorkType(prefs.work_type || "");
       } catch (e) {
         if (!alive) return;
         if (!handleAuth(e)) {
@@ -286,7 +312,7 @@ export default function SettingsPage() {
     try {
       await api("/prefs", {
         method: "PUT",
-        body: { roles, location: location.trim(), seniority },
+        body: { roles, location: location.trim(), seniority, work_type: workType },
       });
       flashPrefs();
     } catch (e) {
@@ -505,7 +531,8 @@ export default function SettingsPage() {
           {loading ? (
             <div className="flex flex-col gap-5">
               <FieldSkeleton />
-              <div className="grid gap-5 sm:grid-cols-2">
+              <div className="grid gap-5 sm:grid-cols-3">
+                <FieldSkeleton />
                 <FieldSkeleton />
                 <FieldSkeleton />
               </div>
@@ -543,7 +570,7 @@ export default function SettingsPage() {
               </div>
             </Field>
 
-            <div className="grid gap-5 sm:grid-cols-2">
+            <div className="grid gap-5 sm:grid-cols-3">
               <Field label="Location" htmlFor="location">
                 <Input
                   id="location"
@@ -551,6 +578,19 @@ export default function SettingsPage() {
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
                 />
+              </Field>
+              <Field label="Work type" htmlFor="work-type">
+                <Select
+                  id="work-type"
+                  value={workType}
+                  onChange={(e) => setWorkType(e.target.value)}
+                >
+                  {WORK_TYPES.map((w) => (
+                    <option key={w.value} value={w.value}>
+                      {w.label}
+                    </option>
+                  ))}
+                </Select>
               </Field>
               <Field label="Seniority" htmlFor="seniority">
                 <Select

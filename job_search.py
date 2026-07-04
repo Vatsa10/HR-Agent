@@ -74,12 +74,22 @@ def _keep_titled(rows):
     return [r for r in rows if (r.get("title") or "").strip()]
 
 
-def search(keywords, location=None):
+def search(keywords, location=None, work_type=None, experience_level=None,
+           job_type=None, date_posted=None):
     """Search LinkedIn jobs and parse into [{li_job_id, title, company, location, url}].
 
+    Optional filters (work_type/experience_level/job_type/date_posted) are
+    forwarded verbatim to linkedin_service.search_jobs; None means unfiltered.
     Only real jobs are returned: rows with an empty title are dropped.
     """
-    raw = linkedin_service.search_jobs(keywords, location=location)
+    raw = linkedin_service.search_jobs(
+        keywords,
+        location=location,
+        work_type=work_type,
+        experience_level=experience_level,
+        job_type=job_type,
+        date_posted=date_posted,
+    )
     refs = (raw.get("references") or {}).get("search_results") or []
     job_ids = raw.get("job_ids") or []
     blob = (raw.get("sections") or {}).get("search_results") or ""

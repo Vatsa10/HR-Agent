@@ -323,11 +323,22 @@ def update_generated(gen_id, user_id, content, markdown):
 
 # ---------------- job prefs (users.extras.job_prefs) ----------------
 
-_EMPTY_PREFS = {"roles": [], "location": "", "seniority": ""}
+_EMPTY_PREFS = {
+    "roles": [],
+    "location": "",
+    "seniority": "",
+    "work_type": "",
+    "job_type": "",
+}
 
 
 def get_job_prefs(user_id):
-    """Return the user's job preferences, seeding an empty default if absent."""
+    """Return the user's job preferences, seeding an empty default if absent.
+
+    Always returns every known key (roles/location/seniority/work_type/job_type)
+    with a safe default, so rows saved before work_type/job_type existed still
+    read back a complete shape.
+    """
     row = _one("SELECT extras FROM users WHERE id = %s", (user_id,))
     extras = (row or {}).get("extras") or {}
     prefs = extras.get("job_prefs")
@@ -337,6 +348,8 @@ def get_job_prefs(user_id):
         "roles": prefs.get("roles", []),
         "location": prefs.get("location", ""),
         "seniority": prefs.get("seniority", ""),
+        "work_type": prefs.get("work_type", ""),
+        "job_type": prefs.get("job_type", ""),
     }
 
 
@@ -344,10 +357,13 @@ def set_job_prefs(user_id, prefs):
     """Merge prefs into users.extras.job_prefs (user-scoped)."""
     row = _one("SELECT extras FROM users WHERE id = %s", (user_id,))
     extras = (row or {}).get("extras") or {}
+    prefs = prefs or {}
     extras["job_prefs"] = {
-        "roles": (prefs or {}).get("roles", []),
-        "location": (prefs or {}).get("location", ""),
-        "seniority": (prefs or {}).get("seniority", ""),
+        "roles": prefs.get("roles", []),
+        "location": prefs.get("location", ""),
+        "seniority": prefs.get("seniority", ""),
+        "work_type": prefs.get("work_type", ""),
+        "job_type": prefs.get("job_type", ""),
     }
     _exec("UPDATE users SET extras = %s WHERE id = %s", (Jsonb(extras), user_id))
     return extras["job_prefs"]
