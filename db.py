@@ -414,6 +414,24 @@ def update_job_status(job_id, user_id, status):
     )
 
 
+def update_job_scores(job_id, user_id, llm_score, llm_reason):
+    """Update just the LLM fit score/reason on a saved job (user-scoped)."""
+    _exec(
+        "UPDATE saved_jobs SET llm_score = %s, llm_reason = %s WHERE id = %s AND user_id = %s",
+        (llm_score, llm_reason, job_id, user_id),
+    )
+
+
+def saved_job_ids(user_id):
+    """Return the set of li_job_ids the user has already saved or dismissed."""
+    rows = _all(
+        """SELECT li_job_id FROM saved_jobs
+           WHERE user_id = %s AND status IN ('saved', 'dismissed')""",
+        (user_id,),
+    )
+    return {r["li_job_id"] for r in rows if r.get("li_job_id")}
+
+
 # ---------------- companies ----------------
 
 def add_company(user_id, name, linkedin_url=None, notes=None):

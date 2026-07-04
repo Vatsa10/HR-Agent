@@ -49,7 +49,10 @@
   <div class="grid stagger" id="results"></div>
 
   <section class="saved-jobs">
-    <h2>Saved jobs</h2>
+    <div class="saved-head">
+      <h2>Saved jobs</h2>
+      <button class="ghost" id="match-all">Match all saved</button>
+    </div>
     <div id="saved"><p class="muted">Loading saved jobs...</p></div>
   </section>
 </main>
@@ -130,13 +133,15 @@
   }
 
   function cardHtml(j, i) {
-    return `<article class="jcard" style="--i:${i}" data-jid="${esc(j.li_job_id)}">
-      <h3>${esc(j.title || "Untitled role")}</h3>
+    const seen = j.seen === true;
+    return `<article class="jcard${seen ? " seen" : ""}" style="--i:${i}" data-jid="${esc(j.li_job_id)}">
+      <h3>${esc(j.title || "Untitled role")}${seen ? ' <span class="seen-tag">saved</span>' : ""}</h3>
       <div class="meta"><span class="co">${esc(j.company || "")}</span>${j.location ? " · " + esc(j.location) : ""}</div>
       ${scoreChips(j)}
       ${j.llm_reason ? `<p class="reason">${esc(j.llm_reason)}</p>` : ""}
       <div class="row">
         <button class="ghost" data-act="save">Save</button>
+        <button class="ghost" data-act="tailor">Tailor resume</button>
         <button class="ghost" data-act="track">Track company</button>
         <button class="ghost" data-act="deep">Deep match</button>
         ${j.url ? `<a class="open" href="${esc(j.url)}" target="_blank" rel="noopener">Open</a>` : ""}
@@ -170,6 +175,22 @@
         e.target.textContent = "Saved"; loadSaved();
       } catch (err) { e.target.disabled = false; if (err.message !== "unauthorized") showError(err.message); }
     });
+    act("tailor").addEventListener("click", async e => {
+      const btn = e.target;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = "Tailoring...";
+      try {
+        // ensure the job is saved first (tailor needs a saved job id)
+        const saved = await api("/api/jobs/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job: j }) });
+        const t = await api("/api/jobs/" + saved.id + "/tailor", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        const params = new URLSearchParams();
+        if (t.jd_id != null) params.set("jd", t.jd_id);
+        const resume = t.resume_hint != null ? t.resume_hint : latestResumeId;
+        if (resume != null) params.set("resume", resume);
+        location = "/builder.html?" + params.toString();
+      } catch (err) { btn.disabled = false; btn.textContent = orig; if (err.message !== "unauthorized") showError(err.message); }
+    });
     act("track").addEventListener("click", async e => {
       if (!j.company) return showError("No company on this job");
       e.target.disabled = true;
@@ -198,9 +219,11 @@
   }
 
   function renderResults(jobs) {
+    // dedup: already-seen jobs sink below unseen ones (kept, not removed)
+    const sorted = jobs.slice().sort((a, b) => (a.seen === true) - (b.seen === true));
     const wrap = $("results");
-    wrap.innerHTML = jobs.map(cardHtml).join("");
-    wrap.querySelectorAll(".jcard").forEach((card, i) => bindCard(card, jobs[i]));
+    wrap.innerHTML = sorted.map(cardHtml).join("");
+    wrap.querySelectorAll(".jcard").forEach((card, i) => bindCard(card, sorted[i]));
   }
 
   async function pollSearch(jobId) {
@@ -242,6 +265,7 @@
         ${j.llm_score != null ? `<span class="chip fit">fit ${Math.round(j.llm_score)}</span>` : (j.heuristic_score != null ? `<span class="chip h">match ${Math.round(j.heuristic_score)}</span>` : "")}
         <select data-status>${STATUSES.map(s => `<option value="${s}"${s === j.status ? " selected" : ""}>${s}</option>`).join("")}</select>
         ${j.url ? `<a class="open" href="${esc(j.url)}" target="_blank" rel="noopener">Open</a>` : ""}
+        ${j.llm_reason ? `<p class="reason jrow-reason">${esc(j.llm_reason)}</p>` : ""}
       </div>`).join("");
       box.querySelectorAll(".jrow").forEach(row => {
         row.querySelector("[data-status]").addEventListener("change", async e => {
@@ -251,6 +275,21 @@
       });
     } catch (e) { /* 401 redirected */ }
   }
+
+  $("match-all").addEventListener("click", async e => {
+    const btn = e.target;
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = "Matching...";
+    try {
+      await api("/api/jobs/batch-match", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ resume_id: latestResumeId }),
+      });
+      await loadSaved();
+    } catch (err) { if (err.message !== "unauthorized") showError(err.message); }
+    finally { btn.disabled = false; btn.textContent = orig; }
+  });
 
   /* ---------- Init ---------- */
   (async () => {

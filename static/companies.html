@@ -32,6 +32,20 @@
 
   <div id="error" class="error hidden"></div>
 
+  <section class="ask-panel">
+    <h2>Ask</h2>
+    <p class="hint" style="margin:0 0 12px;">Describe who you are looking for in plain language. Pick a company to auto-save the results, or add people individually afterwards.</p>
+    <div class="ask-bar">
+      <input type="text" id="ask-q" placeholder='Describe who to find, e.g. "AI recruiters at OpenAI in SF"' aria-label="People search query">
+      <select id="ask-company" aria-label="Save results to company"><option value="">Save to... (optional)</option></select>
+      <button class="run" id="ask-btn">Ask</button>
+    </div>
+    <div id="ask-status"></div>
+    <div id="ask-understood"></div>
+    <div id="ask-results" class="ask-results"></div>
+  </section>
+
+  <h2 class="section-title">Tracked companies</h2>
   <div class="grid" id="companies"><p class="muted">Loading companies...</p></div>
 </main>
 
@@ -42,6 +56,8 @@
   const $ = id => document.getElementById(id);
 
   let resumes = [];
+  let companies = [];
+  let lastQuery = "";
 
   function showError(msg) {
     const el = $("error");
@@ -173,15 +189,105 @@
     });
   }
 
+  const companyOptions = () => companies.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("");
+
+  function syncCompanySelect() {
+    const sel = $("ask-company");
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">Save to... (optional)</option>' + companyOptions();
+    if (prev && companies.some(c => String(c.id) === prev)) sel.value = prev;
+  }
+
   async function loadCompanies() {
     try {
       const items = await api("/api/companies");
+      companies = items;
+      syncCompanySelect();
       const wrap = $("companies");
       if (!items.length) { wrap.innerHTML = '<p class="muted">No tracked companies yet. Add one above, or track a company from the Jobs page.</p>'; return; }
       wrap.innerHTML = items.map(companyHtml).join("");
       wrap.querySelectorAll(".jcard").forEach((card, i) => bindCompany(card, items[i]));
     } catch (e) { /* 401 redirected */ }
   }
+
+  /* ---------- Ask: natural-language people finder ---------- */
+  function personRowHtml(p, i) {
+    const saved = p.contact_id != null;
+    return `<div class="recruiter" data-idx="${i}">
+      <div class="rhead">
+        <b>${esc(p.name || "Unknown")}</b>
+        <span class="rh">${esc(p.headline || "")}</span>
+        ${p.profile_url ? `<a href="${esc(p.profile_url)}" target="_blank" rel="noopener">Open profile</a>` : ""}
+        ${saved ? '<span class="status-pill">saved</span>' : ""}
+      </div>
+      ${saved ? "" : `<div class="rtools">
+        <select data-addco ${companies.length ? "" : "disabled"}>${companies.length ? companyOptions() : '<option>No companies tracked</option>'}</select>
+        <button class="ghost" data-act="addto" ${companies.length ? "" : "disabled"}>Add to a company</button>
+      </div>`}
+    </div>`;
+  }
+
+  function renderAsk(result) {
+    $("ask-status").innerHTML = "";
+    const qu = result.query_understood || {};
+    const chips = [];
+    if (qu.role) chips.push(`<span class="chip h">${esc(qu.role)}</span>`);
+    if (qu.company) chips.push(`<span class="chip h">${esc(qu.company)}</span>`);
+    if (qu.location) chips.push(`<span class="chip h">${esc(qu.location)}</span>`);
+    $("ask-understood").innerHTML = chips.length
+      ? `<div class="understood"><span class="ul">Understood as</span>${chips.join("")}</div>` : "";
+    const people = result.people || [];
+    const box = $("ask-results");
+    if (!people.length) { box.innerHTML = '<p class="muted">No one found, try rephrasing.</p>'; return; }
+    box.innerHTML = people.map(personRowHtml).join("");
+    box.querySelectorAll(".recruiter").forEach(row => {
+      const addBtn = row.querySelector('[data-act="addto"]');
+      if (!addBtn) return;
+      addBtn.addEventListener("click", async e => {
+        const cid = row.querySelector("[data-addco]").value;
+        if (!cid) return showError("Pick a company first");
+        e.target.disabled = true; e.target.textContent = "Adding...";
+        // Re-run the search scoped to the chosen company so the backend saves the people.
+        await askRun(lastQuery, Number(cid));
+      });
+    });
+  }
+
+  async function pollNl(jobId) {
+    while (true) {
+      const job = await api("/api/jobs/" + jobId);
+      if (job.status === "done") { return job.result || { query_understood: {}, people: [] }; }
+      if (job.status === "error") { throw new Error(job.error || "Search failed"); }
+      $("ask-status").innerHTML = `<p class="spin">${esc(job.stage_label || "Searching LinkedIn...")}</p>`;
+      await new Promise(r => setTimeout(r, 1300));
+    }
+  }
+
+  async function askRun(query, companyId) {
+    query = (query || "").trim();
+    if (!query) return showError("Describe who to find first");
+    lastQuery = query;
+    const btn = $("ask-btn");
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = "Asking...";
+    $("ask-status").innerHTML = '<p class="spin">Starting...</p>';
+    try {
+      const payload = { query };
+      if (companyId) payload.company_id = companyId;
+      const { job_id } = await api("/api/hr/nl-search", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      const result = await pollNl(job_id);
+      renderAsk(result);
+      if (companyId) loadCompanies(); // new contacts now live under the tracked company
+    } catch (err) { $("ask-status").innerHTML = ""; if (err.message !== "unauthorized") showError(err.message); }
+    finally { btn.disabled = false; btn.textContent = orig; }
+  }
+
+  $("ask-btn").addEventListener("click", () => {
+    const cid = $("ask-company").value;
+    askRun($("ask-q").value, cid ? Number(cid) : null);
+  });
+  $("ask-q").addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); $("ask-btn").click(); } });
 
   $("track").addEventListener("click", async () => {
     const name = $("cname").value.trim();

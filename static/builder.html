@@ -337,10 +337,20 @@
 
   $("print").addEventListener("click", () => window.print());
 
+  // Preselect JD + resume from ?jd=<id>&resume=<id> (tailor-from-job deep link).
+  function applyQueryParams() {
+    const p = new URLSearchParams(location.search);
+    const jd = p.get("jd");
+    const resume = p.get("resume");
+    if (jd && $("jd-sel").querySelector(`option[value="${CSS.escape(jd)}"]`)) $("jd-sel").value = jd;
+    if (resume && $("resume-sel").querySelector(`option[value="${CSS.escape(resume)}"]`)) $("resume-sel").value = resume;
+  }
+
   /* ---------- Init ---------- */
   (async () => {
     try {
       await Promise.all([loadLists(), loadProfile()]);
+      applyQueryParams();
     } catch (e) { /* 401 already redirected */ }
   })();
 })();

@@ -25,6 +25,7 @@ import db
 import hr_finder
 import job_search
 import jd_matcher
+import people_finder
 from agents import build_graph
 from resume_builder import build_resume, json_resume_to_markdown
 
@@ -534,6 +535,13 @@ def _run_job_search(job_id: str, keywords: str, location: str, user_id: int):
     job = JOBS[job_id]
     try:
         jobs = job_search.search(keywords, location or None)
+        try:
+            seen_ids = db.saved_job_ids(user_id)
+        except Exception:
+            logger.exception("saved_job_ids lookup failed")
+            seen_ids = set()
+        for j in jobs:
+            j["seen"] = j.get("li_job_id") in seen_ids
         row, resume_text = _resume_text_for(user_id)
         if row and (row.get("parsed") or {}):
             jobs = job_search.heuristic_scores(row["parsed"], jobs)
@@ -625,6 +633,67 @@ async def api_jobs_status(request: Request, job_id: int):
     body = await request.json()
     db.update_job_status(job_id, user["id"], (body.get("status") or "saved").strip())
     return {"ok": True}
+
+
+@app.post("/api/jobs/batch-match")
+async def api_jobs_batch_match(request: Request):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    body = await request.json()
+    row, resume_text = _resume_text_for(user["id"], body.get("resume_id"))
+    if not row or not resume_text:
+        return JSONResponse({"error": "resume not found"}, status_code=404)
+    saved = db.list_jobs(user["id"])[:10]
+    if not saved:
+        return {"jobs": []}
+    for start in range(0, len(saved), 6):
+        batch = saved[start:start + 6]
+        try:
+            scores = job_search.batch_llm_scores(resume_text, batch)
+        except Exception:
+            logger.exception("batch_llm_scores failed")
+            continue
+        for s in scores:
+            idx = s.get("index")
+            if isinstance(idx, int) and 0 <= idx < len(batch):
+                job = batch[idx]
+                job["llm_score"] = s.get("score")
+                job["llm_reason"] = s.get("reason")
+                try:
+                    db.update_job_scores(
+                        job["id"], user["id"], s.get("score"), s.get("reason")
+                    )
+                except Exception:
+                    logger.exception("update_job_scores failed")
+    return {"jobs": saved}
+
+
+@app.post("/api/jobs/{job_id}/tailor")
+async def api_jobs_tailor(request: Request, job_id: int):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    saved = db.get_job(job_id, user["id"])
+    if not saved:
+        return JSONResponse({"error": "job not found"}, status_code=404)
+    jd_text = ""
+    try:
+        import linkedin_service
+        details = linkedin_service.job_details(saved["li_job_id"])
+        jd_text = _jd_string(details).strip()
+    except Exception:
+        logger.exception("job_details failed; falling back to stored fields")
+    if not jd_text:
+        jd_text = "\n".join(
+            str(saved.get(k) or "")
+            for k in ("title", "company", "snippet")
+            if saved.get(k)
+        ).strip()
+    jd_id = db.save_jd(user["id"], saved.get("url") or None, jd_text)
+    resumes = db.list_resumes(user["id"])
+    resume_hint = resumes[0]["id"] if resumes else None
+    return {"jd_id": jd_id, "resume_hint": resume_hint}
 
 
 @app.post("/api/jobs/{job_id}/deep-match")
@@ -719,6 +788,55 @@ async def api_companies_find_hr(request: Request, company_id: int):
     threading.Thread(
         target=_run_find_hr,
         args=(job_id, company_id, company["name"], user["id"]),
+        daemon=True,
+    ).start()
+    return {"job_id": job_id}
+
+
+# ---------------- nl people finder (chatbot) ----------------
+
+def _run_nl_search(job_id: str, query: str, user_id: int, company_id):
+    job = JOBS[job_id]
+    try:
+        result = people_finder.search(query)
+        if company_id:
+            for p in result.get("people") or []:
+                try:
+                    cid = db.add_hr_contact(
+                        user_id, company_id, p.get("name"),
+                        headline=p.get("headline"), profile_url=p.get("profile_url"),
+                    )
+                    p["contact_id"] = cid
+                except Exception:
+                    logger.exception("add_hr_contact failed")
+        job["result"] = result
+        job["status"] = "done"
+    except Exception as e:
+        logger.exception("nl search failed")
+        job["status"] = "error"
+        job["error"] = str(e)
+    _persist_job(job_id, job)
+
+
+@app.post("/api/hr/nl-search")
+async def api_hr_nl_search(request: Request):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    body = await request.json()
+    query = (body.get("query") or "").strip()
+    if not query:
+        return JSONResponse({"error": "query required"}, status_code=400)
+    company_id = body.get("company_id")
+    if company_id is not None:
+        company = db.get_company(company_id, user["id"])
+        if not company:
+            return JSONResponse({"error": "company not found"}, status_code=404)
+    job_id = uuid.uuid4().hex
+    JOBS[job_id] = {"status": "running", "stage": "hr"}
+    threading.Thread(
+        target=_run_nl_search,
+        args=(job_id, query, user["id"], company_id),
         daemon=True,
     ).start()
     return {"job_id": job_id}
