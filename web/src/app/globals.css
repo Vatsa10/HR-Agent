@@ -1,0 +1,59 @@
+@import "tailwindcss";
+
+/* Do Apply design tokens — white/blue/black, OKLCH. Light only (see DESIGN.md). */
+:root {
+  --paper: oklch(99% 0.004 250);
+  --surface: oklch(97.5% 0.006 250);
+  --surface-2: oklch(95.5% 0.008 250);
+  --line: oklch(90% 0.01 250);
+  --ink: oklch(20% 0.02 260);
+  --ink-soft: oklch(42% 0.02 258);
+  --ink-faint: oklch(60% 0.018 255);
+  --blue: oklch(55% 0.19 255);
+  --blue-strong: oklch(48% 0.2 256);
+  --blue-soft: oklch(95% 0.035 252);
+  --blue-ring: oklch(55% 0.19 255 / 0.35);
+  --good: oklch(58% 0.14 155);
+  --warn: oklch(66% 0.15 75);
+  --bad: oklch(56% 0.17 25);
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+  --color-blue: var(--blue);
+  --color-blue-strong: var(--blue-strong);
+  --color-blue-soft: var(--blue-soft);
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
