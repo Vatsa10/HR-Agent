@@ -1,4 +1,4 @@
-Extract ONLY the awards and honors information from this resume.
+Extract ONLY the awards, honors, and publications information from this resume.
 
 --- The input markdown starts here ---
 
@@ -10,11 +10,17 @@ Return ONLY a JSON object with this structure:
 {
   "awards": [
     {
-      "title": "Award name",
+      "title": "Award or publication name",
       "date": "Award date (YYYY-MM)",
-      "awarder": "Awarding organization"
+      "awarder": "Awarding organization, publisher, or venue",
+      "summary": "Extra details such as DOI, grant, or placement context"
     }
   ]
 }
 
-**IMPORTANT**: Return ONLY valid JSON. Do not include any explanatory text. 
+Rules:
+1. Include EVERY item from awards, honors, publications, and combined "Publications & Awards" sections. Do not drop any entry.
+2. Preserve DOIs, grant names, and prize placements verbatim in "summary".
+3. If one line lists multiple awards or publications, output one entry per item.
+
+**IMPORTANT**: Return ONLY valid JSON. Do not include any explanatory text.
