@@ -10,6 +10,8 @@
     const links = [
       { href: "/", label: "Analyze", match: ["/", "/index.html"] },
       { href: "/builder.html", label: "Builder", match: ["/builder.html"] },
+      { href: "/jobs.html", label: "Jobs", match: ["/jobs.html"] },
+      { href: "/companies.html", label: "Companies", match: ["/companies.html"] },
       { href: "/linkedin.html", label: "LinkedIn", match: ["/linkedin.html"] },
     ];
     const path = location.pathname;

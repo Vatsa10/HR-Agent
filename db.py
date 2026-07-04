@@ -85,6 +85,42 @@ CREATE TABLE IF NOT EXISTS generated_resumes (
     markdown text,
     created_at timestamptz DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS saved_jobs (
+    id serial PRIMARY KEY,
+    user_id int REFERENCES users(id),
+    li_job_id text,
+    title text,
+    company text,
+    location text,
+    url text,
+    snippet text,
+    heuristic_score real,
+    llm_score real,
+    llm_reason text,
+    status text DEFAULT 'saved',
+    created_at timestamptz DEFAULT now(),
+    UNIQUE (user_id, li_job_id)
+);
+CREATE TABLE IF NOT EXISTS companies (
+    id serial PRIMARY KEY,
+    user_id int REFERENCES users(id),
+    name text,
+    linkedin_url text,
+    notes text,
+    created_at timestamptz DEFAULT now(),
+    UNIQUE (user_id, name)
+);
+CREATE TABLE IF NOT EXISTS hr_contacts (
+    id serial PRIMARY KEY,
+    user_id int REFERENCES users(id),
+    company_id int REFERENCES companies(id),
+    name text,
+    headline text,
+    profile_url text,
+    message_draft text,
+    status text DEFAULT 'found',
+    created_at timestamptz DEFAULT now()
+);
 """
 
 
@@ -282,4 +318,172 @@ def update_generated(gen_id, user_id, content, markdown):
     _exec(
         "UPDATE generated_resumes SET content = %s, markdown = %s WHERE id = %s AND user_id = %s",
         (Jsonb(content), markdown, gen_id, user_id),
+    )
+
+
+# ---------------- job prefs (users.extras.job_prefs) ----------------
+
+_EMPTY_PREFS = {"roles": [], "location": "", "seniority": ""}
+
+
+def get_job_prefs(user_id):
+    """Return the user's job preferences, seeding an empty default if absent."""
+    row = _one("SELECT extras FROM users WHERE id = %s", (user_id,))
+    extras = (row or {}).get("extras") or {}
+    prefs = extras.get("job_prefs")
+    if not prefs:
+        return dict(_EMPTY_PREFS)
+    return {
+        "roles": prefs.get("roles", []),
+        "location": prefs.get("location", ""),
+        "seniority": prefs.get("seniority", ""),
+    }
+
+
+def set_job_prefs(user_id, prefs):
+    """Merge prefs into users.extras.job_prefs (user-scoped)."""
+    row = _one("SELECT extras FROM users WHERE id = %s", (user_id,))
+    extras = (row or {}).get("extras") or {}
+    extras["job_prefs"] = {
+        "roles": (prefs or {}).get("roles", []),
+        "location": (prefs or {}).get("location", ""),
+        "seniority": (prefs or {}).get("seniority", ""),
+    }
+    _exec("UPDATE users SET extras = %s WHERE id = %s", (Jsonb(extras), user_id))
+    return extras["job_prefs"]
+
+
+# ---------------- saved jobs ----------------
+
+def save_job(user_id, job):
+    """Upsert a job for a user, keyed on (user_id, li_job_id)."""
+    row = _one(
+        """INSERT INTO saved_jobs
+             (user_id, li_job_id, title, company, location, url, snippet,
+              heuristic_score, llm_score, llm_reason, status)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+           ON CONFLICT (user_id, li_job_id) DO UPDATE SET
+             title = EXCLUDED.title,
+             company = EXCLUDED.company,
+             location = EXCLUDED.location,
+             url = EXCLUDED.url,
+             snippet = EXCLUDED.snippet,
+             heuristic_score = EXCLUDED.heuristic_score,
+             llm_score = EXCLUDED.llm_score,
+             llm_reason = EXCLUDED.llm_reason
+           RETURNING id""",
+        (
+            user_id,
+            job.get("li_job_id"),
+            job.get("title"),
+            job.get("company"),
+            job.get("location"),
+            job.get("url"),
+            job.get("snippet"),
+            job.get("heuristic_score"),
+            job.get("llm_score"),
+            job.get("llm_reason"),
+            job.get("status", "saved"),
+        ),
+    )
+    return row["id"]
+
+
+def list_jobs(user_id):
+    return _all(
+        """SELECT id, li_job_id, title, company, location, url, snippet,
+                  heuristic_score, llm_score, llm_reason, status, created_at
+           FROM saved_jobs WHERE user_id = %s ORDER BY created_at DESC""",
+        (user_id,),
+    )
+
+
+def get_job(job_id, user_id):
+    return _one(
+        """SELECT id, li_job_id, title, company, location, url, snippet,
+                  heuristic_score, llm_score, llm_reason, status, created_at
+           FROM saved_jobs WHERE id = %s AND user_id = %s""",
+        (job_id, user_id),
+    )
+
+
+def update_job_status(job_id, user_id, status):
+    _exec(
+        "UPDATE saved_jobs SET status = %s WHERE id = %s AND user_id = %s",
+        (status, job_id, user_id),
+    )
+
+
+# ---------------- companies ----------------
+
+def add_company(user_id, name, linkedin_url=None, notes=None):
+    row = _one(
+        """INSERT INTO companies (user_id, name, linkedin_url, notes)
+           VALUES (%s, %s, %s, %s)
+           ON CONFLICT (user_id, name) DO UPDATE SET
+             linkedin_url = COALESCE(EXCLUDED.linkedin_url, companies.linkedin_url),
+             notes = COALESCE(EXCLUDED.notes, companies.notes)
+           RETURNING id""",
+        (user_id, name, linkedin_url, notes),
+    )
+    return row["id"]
+
+
+def list_companies(user_id):
+    return _all(
+        """SELECT id, name, linkedin_url, notes, created_at
+           FROM companies WHERE user_id = %s ORDER BY created_at DESC""",
+        (user_id,),
+    )
+
+
+def get_company(company_id, user_id):
+    return _one(
+        """SELECT id, name, linkedin_url, notes, created_at
+           FROM companies WHERE id = %s AND user_id = %s""",
+        (company_id, user_id),
+    )
+
+
+# ---------------- hr contacts ----------------
+
+def add_hr_contact(user_id, company_id, name, headline=None, profile_url=None,
+                   message_draft=None, status="found"):
+    row = _one(
+        """INSERT INTO hr_contacts
+             (user_id, company_id, name, headline, profile_url, message_draft, status)
+           VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+        (user_id, company_id, name, headline, profile_url, message_draft, status),
+    )
+    return row["id"]
+
+
+def list_hr_contacts(user_id, company_id=None):
+    if company_id is not None:
+        return _all(
+            """SELECT id, company_id, name, headline, profile_url, message_draft,
+                      status, created_at
+               FROM hr_contacts WHERE user_id = %s AND company_id = %s
+               ORDER BY created_at DESC""",
+            (user_id, company_id),
+        )
+    return _all(
+        """SELECT id, company_id, name, headline, profile_url, message_draft,
+                  status, created_at
+           FROM hr_contacts WHERE user_id = %s ORDER BY created_at DESC""",
+        (user_id,),
+    )
+
+
+def update_hr_contact(contact_id, user_id, **fields):
+    """Update whitelisted fields on an hr_contact (user-scoped)."""
+    allowed = {"name", "headline", "profile_url", "message_draft", "status"}
+    sets = {k: v for k, v in fields.items() if k in allowed}
+    if not sets:
+        return
+    cols = ", ".join(f"{k} = %s" for k in sets)
+    params = list(sets.values()) + [contact_id, user_id]
+    _exec(
+        f"UPDATE hr_contacts SET {cols} WHERE id = %s AND user_id = %s",
+        tuple(params),
     )

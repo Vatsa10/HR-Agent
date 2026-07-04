@@ -20,7 +20,11 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 import auth
+import cold_message
 import db
+import hr_finder
+import job_search
+import jd_matcher
 from agents import build_graph
 from resume_builder import build_resume, json_resume_to_markdown
 
@@ -89,7 +93,49 @@ STAGE_LABELS = {
     "jd": "JD Agent matching the job description",
     "evaluate": "Evaluator Agent scoring the candidate",
     "linkedin": "LinkedIn Agent importing the profile",
+    "search": "Searching LinkedIn jobs and scoring fit",
+    "hr": "Finding recruiters at the company",
 }
+
+
+def _resume_text_for(user_id, resume_id=None):
+    """Return (row, markdown_text) for a resume; latest if resume_id omitted."""
+    row = None
+    if resume_id is not None:
+        row = db.get_resume(resume_id, user_id)
+    else:
+        resumes = db.list_resumes(user_id)
+        if resumes:
+            row = db.get_resume(resumes[0]["id"], user_id)
+    if not row:
+        return None, ""
+    parsed = row.get("parsed") or {}
+    try:
+        text = json_resume_to_markdown(parsed) if parsed else ""
+    except Exception:
+        logger.exception("resume markdown render failed")
+        text = ""
+    return row, text
+
+
+def _jd_string(details):
+    """Build a JD text string from a job_details dict of varying shape."""
+    if not isinstance(details, dict):
+        return str(details or "")
+    parts = []
+    for k in ("title", "company", "location", "description", "text"):
+        v = details.get(k)
+        if v:
+            parts.append(str(v))
+    if not parts:
+        sec = details.get("sections")
+        if isinstance(sec, dict):
+            parts = [str(v) for v in sec.values() if v]
+        elif sec:
+            parts = [str(sec)]
+    if not parts:
+        parts = [json.dumps(details, ensure_ascii=False)]
+    return "\n".join(parts)
 
 
 # ---------------- auth routes ----------------
@@ -315,25 +361,6 @@ async def api_import_linkedin(request: Request):
     return {"job_id": job_id}
 
 
-@app.get("/api/jobs/{job_id}")
-async def job_status(request: Request, job_id: str):
-    if not current_user(request):
-        return _unauth()
-    job = JOBS.get(job_id) or _load_job(job_id)
-    if not job:
-        return JSONResponse({"error": "Unknown job"}, status_code=404)
-    payload = {
-        "status": job["status"],
-        "stage": job.get("stage"),
-        "stage_label": STAGE_LABELS.get(job.get("stage"), ""),
-    }
-    if job["status"] == "done":
-        payload["result"] = job["result"]
-    if job["status"] == "error":
-        payload["error"] = job.get("error")
-    return payload
-
-
 # ---------------- history / data routes ----------------
 
 @app.get("/api/history")
@@ -449,6 +476,288 @@ async def api_generated_update(request: Request, gen_id: int):
     return {"id": gen_id, "content": content, "markdown": markdown}
 
 
+# ---------------- job preferences ----------------
+
+@app.get("/api/prefs")
+async def api_get_prefs(request: Request):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    return db.get_job_prefs(user["id"])
+
+
+@app.put("/api/prefs")
+async def api_set_prefs(request: Request):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    body = await request.json()
+    roles = body.get("roles") or []
+    if not isinstance(roles, list):
+        roles = [r.strip() for r in str(roles).split(",") if r.strip()]
+    prefs = {
+        "roles": [str(r).strip() for r in roles if str(r).strip()],
+        "location": (body.get("location") or "").strip(),
+        "seniority": (body.get("seniority") or "").strip(),
+    }
+    return db.set_job_prefs(user["id"], prefs)
+
+
+# ---------------- job search ----------------
+
+def _run_job_search(job_id: str, keywords: str, location: str, user_id: int):
+    job = JOBS[job_id]
+    try:
+        jobs = job_search.search(keywords, location or None)
+        row, resume_text = _resume_text_for(user_id)
+        if row and (row.get("parsed") or {}):
+            jobs = job_search.heuristic_scores(row["parsed"], jobs)
+            jobs.sort(key=lambda j: j.get("heuristic_score", 0) or 0, reverse=True)
+            top = jobs[:6]
+            if resume_text and top:
+                for s in job_search.batch_llm_scores(resume_text, top):
+                    idx = s.get("index")
+                    if isinstance(idx, int) and 0 <= idx < len(top):
+                        top[idx]["llm_score"] = s.get("score")
+                        top[idx]["llm_reason"] = s.get("reason")
+        job["result"] = {"jobs": jobs}
+        job["status"] = "done"
+    except Exception as e:
+        logger.exception("job search failed")
+        job["status"] = "error"
+        job["error"] = str(e)
+    _persist_job(job_id, job)
+
+
+@app.post("/api/jobs/search")
+async def api_jobs_search(request: Request):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    body = await request.json()
+    prefs = db.get_job_prefs(user["id"])
+    keywords = (body.get("keywords") or " ".join(prefs.get("roles") or [])).strip()
+    location = (body.get("location") or prefs.get("location") or "").strip()
+    if not keywords:
+        return JSONResponse({"error": "Provide keywords or set roles in preferences"}, status_code=400)
+    job_id = uuid.uuid4().hex
+    JOBS[job_id] = {"status": "running", "stage": "search"}
+    threading.Thread(
+        target=_run_job_search,
+        args=(job_id, keywords, location, user["id"]),
+        daemon=True,
+    ).start()
+    return {"job_id": job_id}
+
+
+@app.get("/api/jobs/search/{job_id}")
+async def api_jobs_search_status(request: Request, job_id: str):
+    if not current_user(request):
+        return _unauth()
+    job = JOBS.get(job_id) or _load_job(job_id)
+    if not job:
+        return JSONResponse({"error": "Unknown job"}, status_code=404)
+    payload = {
+        "status": job["status"],
+        "stage": job.get("stage"),
+        "stage_label": STAGE_LABELS.get(job.get("stage"), ""),
+    }
+    if job["status"] == "done":
+        payload["result"] = job["result"]
+    if job["status"] == "error":
+        payload["error"] = job.get("error")
+    return payload
+
+
+# ---------------- saved jobs ----------------
+
+@app.get("/api/jobs/saved")
+async def api_jobs_saved(request: Request):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    return db.list_jobs(user["id"])
+
+
+@app.post("/api/jobs/save")
+async def api_jobs_save(request: Request):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    body = await request.json()
+    job = body.get("job") or {}
+    if not job.get("li_job_id"):
+        return JSONResponse({"error": "job.li_job_id required"}, status_code=400)
+    new_id = db.save_job(user["id"], job)
+    return {"id": new_id}
+
+
+@app.put("/api/jobs/{job_id}/status")
+async def api_jobs_status(request: Request, job_id: int):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    body = await request.json()
+    db.update_job_status(job_id, user["id"], (body.get("status") or "saved").strip())
+    return {"ok": True}
+
+
+@app.post("/api/jobs/{job_id}/deep-match")
+async def api_jobs_deep_match(request: Request, job_id: int):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    body = await request.json()
+    saved = db.get_job(job_id, user["id"])
+    if not saved:
+        return JSONResponse({"error": "job not found"}, status_code=404)
+    row, resume_text = _resume_text_for(user["id"], body.get("resume_id"))
+    if not row or not resume_text:
+        return JSONResponse({"error": "resume not found"}, status_code=404)
+    try:
+        import linkedin_service
+        details = linkedin_service.job_details(saved["li_job_id"])
+    except Exception as e:
+        logger.exception("job_details failed")
+        return JSONResponse({"error": f"could not fetch job: {e}"}, status_code=502)
+    jd_text = _jd_string(details)
+    if not jd_text.strip():
+        return JSONResponse({"error": "empty job description"}, status_code=502)
+    try:
+        analysis = jd_matcher.match_resume_to_jd(resume_text, jd_text=jd_text)
+    except Exception as e:
+        logger.exception("deep match failed")
+        return JSONResponse({"error": str(e)}, status_code=500)
+    return analysis.model_dump()
+
+
+# ---------------- companies ----------------
+
+@app.get("/api/companies")
+async def api_companies(request: Request):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    companies = db.list_companies(user["id"])
+    for c in companies:
+        c["contacts"] = db.list_hr_contacts(user["id"], c["id"])
+    return companies
+
+
+@app.post("/api/companies/track")
+async def api_companies_track(request: Request):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    new_id = db.add_company(user["id"], name, (body.get("linkedin_url") or "").strip() or None)
+    return {"id": new_id}
+
+
+def _run_find_hr(job_id: str, company_id: int, company_name: str, user_id: int):
+    job = JOBS[job_id]
+    try:
+        recruiters = hr_finder.find_recruiters(company_name)
+        contacts = []
+        for r in recruiters:
+            cid = db.add_hr_contact(
+                user_id, company_id, r.get("name"),
+                headline=r.get("headline"), profile_url=r.get("profile_url"),
+            )
+            contacts.append({"id": cid, **r})
+        job["result"] = {"contacts": contacts}
+        job["status"] = "done"
+    except Exception as e:
+        logger.exception("find hr failed")
+        job["status"] = "error"
+        job["error"] = str(e)
+    _persist_job(job_id, job)
+
+
+@app.post("/api/companies/{company_id}/find-hr")
+async def api_companies_find_hr(request: Request, company_id: int):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    company = db.get_company(company_id, user["id"])
+    if not company:
+        return JSONResponse({"error": "company not found"}, status_code=404)
+    job_id = uuid.uuid4().hex
+    JOBS[job_id] = {"status": "running", "stage": "hr"}
+    threading.Thread(
+        target=_run_find_hr,
+        args=(job_id, company_id, company["name"], user["id"]),
+        daemon=True,
+    ).start()
+    return {"job_id": job_id}
+
+
+# ---------------- hr contacts ----------------
+
+@app.post("/api/hr/{contact_id}/draft")
+async def api_hr_draft(request: Request, contact_id: int):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    body = await request.json()
+    contacts = db.list_hr_contacts(user["id"])
+    contact = next((c for c in contacts if c["id"] == contact_id), None)
+    if not contact:
+        return JSONResponse({"error": "contact not found"}, status_code=404)
+    row, resume_text = _resume_text_for(user["id"], body.get("resume_id"))
+    if not row or not resume_text:
+        return JSONResponse({"error": "resume not found"}, status_code=404)
+    company = db.get_company(contact["company_id"], user["id"]) if contact.get("company_id") else None
+    target = {"company": (company or {}).get("name", "")}
+    recruiter = {"name": contact.get("name"), "headline": contact.get("headline")}
+    drafted = cold_message.draft_message(resume_text, target, recruiter, tone=(body.get("tone") or "warm"))
+    combined = drafted.get("subject", "")
+    if drafted.get("body"):
+        combined = (combined + "\n\n" + drafted["body"]).strip()
+    db.update_hr_contact(contact_id, user["id"], message_draft=combined, status="drafted")
+    return drafted
+
+
+@app.put("/api/hr/{contact_id}")
+async def api_hr_update(request: Request, contact_id: int):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    body = await request.json()
+    fields = {}
+    if "status" in body:
+        fields["status"] = body["status"]
+    if "message_draft" in body:
+        fields["message_draft"] = body["message_draft"]
+    db.update_hr_contact(contact_id, user["id"], **fields)
+    return {"ok": True}
+
+
+# ---------------- generic job polling (analyze / linkedin) ----------------
+# Defined after the specific /api/jobs/* routes so those win path matching.
+
+@app.get("/api/jobs/{job_id}")
+async def job_status(request: Request, job_id: str):
+    if not current_user(request):
+        return _unauth()
+    job = JOBS.get(job_id) or _load_job(job_id)
+    if not job:
+        return JSONResponse({"error": "Unknown job"}, status_code=404)
+    payload = {
+        "status": job["status"],
+        "stage": job.get("stage"),
+        "stage_label": STAGE_LABELS.get(job.get("stage"), ""),
+    }
+    if job["status"] == "done":
+        payload["result"] = job["result"]
+    if job["status"] == "error":
+        payload["error"] = job.get("error")
+    return payload
+
+
 # ---------------- pages ----------------
 
 @app.get("/")
@@ -475,6 +784,20 @@ async def linkedin_page(request: Request):
     if not current_user(request):
         return RedirectResponse("/login.html", status_code=302)
     return FileResponse(STATIC_DIR / "linkedin.html")
+
+
+@app.get("/jobs.html")
+async def jobs_page(request: Request):
+    if not current_user(request):
+        return RedirectResponse("/login.html", status_code=302)
+    return FileResponse(STATIC_DIR / "jobs.html")
+
+
+@app.get("/companies.html")
+async def companies_page(request: Request):
+    if not current_user(request):
+        return RedirectResponse("/login.html", status_code=302)
+    return FileResponse(STATIC_DIR / "companies.html")
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

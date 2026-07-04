@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HR-Agent · Companies</title>
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<div id="nav"></div>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/nav.js"></script>
+
+<main class="wrap">
+  <header>
+    <h1>Companies</h1>
+    <p>Track companies you care about, find recruiters and talent-acquisition contacts, and draft a short, truthful outreach message grounded in one real fact from your resume.</p>
+  </header>
+
+  <div class="prefs" style="grid-template-columns: 2fr 2fr auto;">
+    <div class="field">
+      <label for="cname">Company name</label>
+      <input type="text" id="cname" placeholder="Acme Inc">
+    </div>
+    <div class="field">
+      <label for="curl">LinkedIn URL (optional)</label>
+      <input type="url" id="curl" placeholder="https://linkedin.com/company/acme">
+    </div>
+    <button class="run" id="track">Track</button>
+  </div>
+
+  <div id="error" class="error hidden"></div>
+
+  <div class="grid" id="companies"><p class="muted">Loading companies...</p></div>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  const { api, esc } = window.HR;
+  const $ = id => document.getElementById(id);
+
+  let resumes = [];
+
+  function showError(msg) {
+    const el = $("error");
+    el.textContent = msg;
+    el.classList.remove("hidden");
+    setTimeout(() => el.classList.add("hidden"), 6000);
+  }
+
+  const resumeOptions = () => resumes.map(r => `<option value="${r.id}">${esc(r.filename)}</option>`).join("");
+  const TONES = ["warm", "direct", "formal", "enthusiastic"];
+  const HR_STATUSES = ["found", "drafted", "messaged"];
+
+  function recruiterHtml(c) {
+    return `<div class="recruiter" data-cid="${c.id}">
+      <div class="rhead">
+        <b>${esc(c.name || "Unknown")}</b>
+        <span class="rh">${esc(c.headline || "")}</span>
+        ${c.profile_url ? `<a href="${esc(c.profile_url)}" target="_blank" rel="noopener">Open profile</a>` : ""}
+        <span class="status-pill" data-pill>${esc(c.status || "found")}</span>
+      </div>
+      <div class="rtools">
+        <select data-resume ${resumes.length ? "" : "disabled"}>${resumes.length ? resumeOptions() : '<option>No resume</option>'}</select>
+        <select data-tone>${TONES.map(t => `<option value="${t}">${t}</option>`).join("")}</select>
+        <button class="ghost" data-act="draft">Draft message</button>
+        <select data-status>${HR_STATUSES.map(s => `<option value="${s}"${s === (c.status || "found") ? " selected" : ""}>${s}</option>`).join("")}</select>
+      </div>
+      <div class="draft ${c.message_draft ? "" : "hidden"}" data-draft>
+        <input type="text" class="subj" data-subj placeholder="Subject">
+        <textarea data-body placeholder="Message body"></textarea>
+        <div class="dtools">
+          <button class="ghost" data-act="copy">Copy</button>
+          <button class="ghost" data-act="save">Save draft</button>
+          <span class="saved-flash hidden" data-flash>Saved.</span>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function companyHtml(c) {
+    return `<article class="jcard" data-company="${c.id}">
+      <h3>${esc(c.name)}</h3>
+      ${c.linkedin_url ? `<div class="meta"><a class="open" href="${esc(c.linkedin_url)}" target="_blank" rel="noopener">Company page</a></div>` : ""}
+      <div class="row">
+        <button class="ghost" data-act="findhr">Find HR</button>
+      </div>
+      <div data-status-line></div>
+      <div data-contacts>${(c.contacts || []).map(recruiterHtml).join("")}</div>
+    </article>`;
+  }
+
+  function bindDraftBox(box, cid) {
+    const subj = box.querySelector("[data-subj]");
+    const body = box.querySelector("[data-body]");
+    box.querySelector('[data-act="copy"]').addEventListener("click", async () => {
+      const text = (subj.value ? subj.value + "\n\n" : "") + body.value;
+      try { await navigator.clipboard.writeText(text); } catch (e) { /* ignore */ }
+      const flash = box.querySelector("[data-flash]");
+      flash.textContent = "Copied."; flash.classList.remove("hidden");
+      setTimeout(() => flash.classList.add("hidden"), 1500);
+    });
+    box.querySelector('[data-act="save"]').addEventListener("click", async () => {
+      const combined = (subj.value ? subj.value + "\n\n" : "") + body.value;
+      try {
+        await api("/api/hr/" + cid, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ message_draft: combined }) });
+        const flash = box.querySelector("[data-flash]");
+        flash.textContent = "Saved."; flash.classList.remove("hidden");
+        setTimeout(() => flash.classList.add("hidden"), 1500);
+      } catch (e) { if (e.message !== "unauthorized") showError(e.message); }
+    });
+  }
+
+  function bindRecruiter(el) {
+    const cid = el.dataset.cid;
+    const draftBox = el.querySelector("[data-draft]");
+    el.querySelector('[data-act="draft"]').addEventListener("click", async e => {
+      const btn = e.target;
+      const resumeId = el.querySelector("[data-resume]").value;
+      if (!resumeId || !resumes.length) return showError("No resume available. Add one on the Analyze page first.");
+      btn.disabled = true; btn.textContent = "Drafting...";
+      try {
+        const d = await api("/api/hr/" + cid + "/draft", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ resume_id: Number(resumeId), tone: el.querySelector("[data-tone]").value }),
+        });
+        draftBox.querySelector("[data-subj]").value = d.subject || "";
+        draftBox.querySelector("[data-body]").value = d.body || "";
+        draftBox.classList.remove("hidden");
+        el.querySelector("[data-pill]").textContent = "drafted";
+        el.querySelector("[data-status]").value = "drafted";
+      } catch (err) { if (err.message !== "unauthorized") showError(err.message); }
+      finally { btn.disabled = false; btn.textContent = "Draft message"; }
+    });
+    el.querySelector("[data-status]").addEventListener("change", async e => {
+      try { await api("/api/hr/" + cid, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: e.target.value }) });
+        el.querySelector("[data-pill]").textContent = e.target.value;
+      } catch (err) { if (err.message !== "unauthorized") showError(err.message); }
+    });
+    bindDraftBox(draftBox, cid);
+  }
+
+  async function pollFindHr(jobId, statusLine) {
+    while (true) {
+      const job = await api("/api/jobs/" + jobId);
+      if (job.status === "done") { statusLine.innerHTML = ""; return job.result.contacts || []; }
+      if (job.status === "error") { statusLine.innerHTML = ""; throw new Error(job.error || "Search failed"); }
+      statusLine.innerHTML = `<p class="spin">${esc(job.stage_label || "Finding recruiters...")}</p>`;
+      await new Promise(r => setTimeout(r, 1300));
+    }
+  }
+
+  function bindCompany(card, c) {
+    card.querySelectorAll(".recruiter").forEach(bindRecruiter);
+    card.querySelector('[data-act="findhr"]').addEventListener("click", async e => {
+      const btn = e.target;
+      const statusLine = card.querySelector("[data-status-line]");
+      btn.disabled = true;
+      statusLine.innerHTML = '<p class="spin">Starting...</p>';
+      try {
+        const { job_id } = await api("/api/companies/" + c.id + "/find-hr", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        const contacts = await pollFindHr(job_id, statusLine);
+        const box = card.querySelector("[data-contacts]");
+        if (!contacts.length) { statusLine.innerHTML = '<p class="muted">No recruiters found. LinkedIn may need a session, or try again later.</p>'; }
+        else {
+          box.innerHTML = contacts.map(recruiterHtml).join("");
+          box.querySelectorAll(".recruiter").forEach(bindRecruiter);
+        }
+      } catch (err) { statusLine.innerHTML = ""; if (err.message !== "unauthorized") showError(err.message); }
+      finally { btn.disabled = false; }
+    });
+  }
+
+  async function loadCompanies() {
+    try {
+      const items = await api("/api/companies");
+      const wrap = $("companies");
+      if (!items.length) { wrap.innerHTML = '<p class="muted">No tracked companies yet. Add one above, or track a company from the Jobs page.</p>'; return; }
+      wrap.innerHTML = items.map(companyHtml).join("");
+      wrap.querySelectorAll(".jcard").forEach((card, i) => bindCompany(card, items[i]));
+    } catch (e) { /* 401 redirected */ }
+  }
+
+  $("track").addEventListener("click", async () => {
+    const name = $("cname").value.trim();
+    if (!name) return showError("Enter a company name");
+    const btn = $("track");
+    btn.disabled = true;
+    try {
+      await api("/api/companies/track", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, linkedin_url: $("curl").value.trim() }) });
+      $("cname").value = ""; $("curl").value = "";
+      loadCompanies();
+    } catch (e) { if (e.message !== "unauthorized") showError(e.message); }
+    finally { btn.disabled = false; }
+  });
+
+  (async () => {
+    try { resumes = await api("/api/resumes"); } catch (e) { resumes = []; }
+    loadCompanies();
+  })();
+})();
+</script>
+</body>
+</html>

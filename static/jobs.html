@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HR-Agent · Jobs</title>
+<link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+<div id="nav"></div>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/nav.js"></script>
+
+<main class="wrap">
+  <header>
+    <h1>Jobs</h1>
+    <p>Search LinkedIn for roles that match your preferences. Each result gets an instant heuristic score, and the top picks get a deeper LLM fit score against your latest resume.</p>
+  </header>
+
+  <div class="prefs">
+    <div class="field">
+      <label for="roles-input">Roles</label>
+      <div class="tags" id="tags">
+        <input type="text" id="roles-input" placeholder="Type a role, press Enter" aria-label="Add role">
+      </div>
+    </div>
+    <div class="field">
+      <label for="location">Location</label>
+      <input type="text" id="location" placeholder="Bengaluru, Remote...">
+    </div>
+    <div class="field">
+      <label for="seniority">Seniority</label>
+      <select id="seniority">
+        <option value="">Any</option>
+        <option value="internship">Internship</option>
+        <option value="entry">Entry</option>
+        <option value="mid">Mid</option>
+        <option value="senior">Senior</option>
+        <option value="lead">Lead</option>
+      </select>
+    </div>
+    <button class="run" id="search">Search jobs</button>
+  </div>
+  <p class="saved-flash hidden" id="prefs-saved">Preferences saved.</p>
+
+  <div id="error" class="error hidden"></div>
+
+  <div id="status"></div>
+  <div class="grid stagger" id="results"></div>
+
+  <section class="saved-jobs">
+    <h2>Saved jobs</h2>
+    <div id="saved"><p class="muted">Loading saved jobs...</p></div>
+  </section>
+</main>
+
+<script>
+(function () {
+  "use strict";
+  const { api, esc } = window.HR;
+  const $ = id => document.getElementById(id);
+
+  let roles = [];
+  let latestResumeId = null;
+
+  function showError(msg) {
+    const el = $("error");
+    el.textContent = msg;
+    el.classList.remove("hidden");
+    setTimeout(() => el.classList.add("hidden"), 6000);
+  }
+
+  /* ---------- Tag input ---------- */
+  function renderTags() {
+    const input = $("roles-input");
+    $("tags").querySelectorAll(".tag").forEach(t => t.remove());
+    roles.forEach((r, i) => {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.innerHTML = esc(r) + '<button type="button" aria-label="Remove ' + esc(r) + '">&times;</button>';
+      tag.querySelector("button").addEventListener("click", () => { roles.splice(i, 1); renderTags(); savePrefs(); });
+      $("tags").insertBefore(tag, input);
+    });
+  }
+  function addRole(v) {
+    v = (v || "").trim();
+    if (v && !roles.includes(v)) { roles.push(v); renderTags(); savePrefs(); }
+  }
+  $("roles-input").addEventListener("keydown", e => {
+    if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addRole($("roles-input").value); $("roles-input").value = ""; }
+    else if (e.key === "Backspace" && !$("roles-input").value && roles.length) { roles.pop(); renderTags(); savePrefs(); }
+  });
+  $("roles-input").addEventListener("blur", () => { if ($("roles-input").value.trim()) { addRole($("roles-input").value); $("roles-input").value = ""; } });
+
+  let saveTimer = null;
+  function savePrefs() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(async () => {
+      try {
+        await api("/api/prefs", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ roles, location: $("location").value.trim(), seniority: $("seniority").value }),
+        });
+        const flash = $("prefs-saved");
+        flash.classList.remove("hidden");
+        setTimeout(() => flash.classList.add("hidden"), 1800);
+      } catch (e) { if (e.message !== "unauthorized") showError(e.message); }
+    }, 500);
+  }
+  $("location").addEventListener("change", savePrefs);
+  $("seniority").addEventListener("change", savePrefs);
+
+  async function loadPrefs() {
+    try {
+      const p = await api("/api/prefs");
+      roles = Array.isArray(p.roles) ? p.roles : [];
+      $("location").value = p.location || "";
+      $("seniority").value = p.seniority || "";
+      renderTags();
+    } catch (e) { /* 401 redirected */ }
+  }
+
+  /* ---------- Search ---------- */
+  function scoreChips(j) {
+    const chips = [];
+    if (j.heuristic_score != null) chips.push(`<span class="chip h">match ${Math.round(j.heuristic_score)}</span>`);
+    if (j.llm_score != null) chips.push(`<span class="chip fit">fit ${Math.round(j.llm_score)}</span>`);
+    return `<div class="chips">${chips.join("")}</div>`;
+  }
+
+  function cardHtml(j, i) {
+    return `<article class="jcard" style="--i:${i}" data-jid="${esc(j.li_job_id)}">
+      <h3>${esc(j.title || "Untitled role")}</h3>
+      <div class="meta"><span class="co">${esc(j.company || "")}</span>${j.location ? " · " + esc(j.location) : ""}</div>
+      ${scoreChips(j)}
+      ${j.llm_reason ? `<p class="reason">${esc(j.llm_reason)}</p>` : ""}
+      <div class="row">
+        <button class="ghost" data-act="save">Save</button>
+        <button class="ghost" data-act="track">Track company</button>
+        <button class="ghost" data-act="deep">Deep match</button>
+        ${j.url ? `<a class="open" href="${esc(j.url)}" target="_blank" rel="noopener">Open</a>` : ""}
+      </div>
+      <div class="deep hidden" data-deep></div>
+    </article>`;
+  }
+
+  const REQ_MARK = { met: "✓", partial: "◑", missing: "✕" };
+  function deepHtml(m) {
+    const reqs = (m.requirements || []).map(r => {
+      const status = ["met", "partial", "missing"].includes(r.status) ? r.status : "partial";
+      return `<div class="req ${status}"><span class="mark">${REQ_MARK[status]}</span>
+        <div class="req-body"><div class="req-text">${esc(r.requirement)}<span class="req-kind">${r.kind === "must_have" ? "must have" : "nice to have"}</span></div>
+        ${r.evidence ? `<div class="req-evidence">${esc(r.evidence)}</div>` : ""}
+        ${r.suggestion ? `<div class="req-suggestion">${esc(r.suggestion)}</div>` : ""}</div></div>`;
+    }).join("");
+    return `<div class="fit-head"><h2 style="font-size:14px;">Deep match</h2>
+      <span class="num">${Math.round(m.fit_score)}<small>/100</small></span>
+      <span class="badge ${m.verdict}">${(m.verdict || "").replace("_", " ")}</span></div>
+      <p class="sum">${esc(m.summary || "")}</p>
+      ${reqs ? `<p class="skills-label">Requirement breakdown</p><div class="reqs">${reqs}</div>` : ""}
+      ${(m.missing_skills || []).length ? `<p class="skills-label">Missing must-haves</p><div class="skills miss">${m.missing_skills.map(s => `<em>${esc(s)}</em>`).join("")}</div>` : ""}`;
+  }
+
+  function bindCard(card, j) {
+    const act = a => card.querySelector(`[data-act="${a}"]`);
+    act("save").addEventListener("click", async e => {
+      e.target.disabled = true;
+      try { await api("/api/jobs/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job: j }) });
+        e.target.textContent = "Saved"; loadSaved();
+      } catch (err) { e.target.disabled = false; if (err.message !== "unauthorized") showError(err.message); }
+    });
+    act("track").addEventListener("click", async e => {
+      if (!j.company) return showError("No company on this job");
+      e.target.disabled = true;
+      try { await api("/api/companies/track", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: j.company }) });
+        e.target.textContent = "Tracked";
+      } catch (err) { e.target.disabled = false; if (err.message !== "unauthorized") showError(err.message); }
+    });
+    act("deep").addEventListener("click", async e => {
+      const box = card.querySelector("[data-deep]");
+      e.target.disabled = true;
+      const orig = e.target.textContent;
+      e.target.textContent = "Matching...";
+      try {
+        // ensure saved (deep-match needs a saved job id)
+        const saved = await api("/api/jobs/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ job: j }) });
+        const m = await api("/api/jobs/" + saved.id + "/deep-match", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ resume_id: latestResumeId }),
+        });
+        box.innerHTML = deepHtml(m);
+        box.classList.remove("hidden");
+        loadSaved();
+      } catch (err) { if (err.message !== "unauthorized") showError(err.message); }
+      finally { e.target.disabled = false; e.target.textContent = orig; }
+    });
+  }
+
+  function renderResults(jobs) {
+    const wrap = $("results");
+    wrap.innerHTML = jobs.map(cardHtml).join("");
+    wrap.querySelectorAll(".jcard").forEach((card, i) => bindCard(card, jobs[i]));
+  }
+
+  async function pollSearch(jobId) {
+    while (true) {
+      const job = await api("/api/jobs/search/" + jobId);
+      if (job.status === "done") { $("status").innerHTML = ""; return job.result.jobs || []; }
+      if (job.status === "error") { $("status").innerHTML = ""; throw new Error(job.error || "Search failed"); }
+      $("status").innerHTML = `<p class="spin">${esc(job.stage_label || "Searching...")}</p>`;
+      await new Promise(r => setTimeout(r, 1200));
+    }
+  }
+
+  $("search").addEventListener("click", async () => {
+    const btn = $("search");
+    btn.disabled = true;
+    $("results").innerHTML = "";
+    $("status").innerHTML = '<p class="spin">Starting search...</p>';
+    try {
+      const { job_id } = await api("/api/jobs/search", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ keywords: roles.join(" "), location: $("location").value.trim() }),
+      });
+      const jobs = await pollSearch(job_id);
+      if (!jobs.length) $("status").innerHTML = '<p class="muted">No jobs found. Try different roles or a broader location.</p>';
+      else renderResults(jobs);
+    } catch (e) { $("status").innerHTML = ""; if (e.message !== "unauthorized") showError(e.message); }
+    finally { btn.disabled = false; }
+  });
+
+  /* ---------- Saved jobs ---------- */
+  const STATUSES = ["saved", "applied", "interviewing", "offer", "rejected", "archived"];
+  async function loadSaved() {
+    try {
+      const items = await api("/api/jobs/saved");
+      const box = $("saved");
+      if (!items.length) { box.innerHTML = '<p class="muted">No saved jobs yet. Search above and hit Save on any card.</p>'; return; }
+      box.innerHTML = items.map(j => `<div class="jrow" data-id="${j.id}">
+        <div class="jt"><b>${esc(j.title || "Untitled")}</b><span>${esc(j.company || "")}${j.location ? " · " + esc(j.location) : ""}</span></div>
+        ${j.llm_score != null ? `<span class="chip fit">fit ${Math.round(j.llm_score)}</span>` : (j.heuristic_score != null ? `<span class="chip h">match ${Math.round(j.heuristic_score)}</span>` : "")}
+        <select data-status>${STATUSES.map(s => `<option value="${s}"${s === j.status ? " selected" : ""}>${s}</option>`).join("")}</select>
+        ${j.url ? `<a class="open" href="${esc(j.url)}" target="_blank" rel="noopener">Open</a>` : ""}
+      </div>`).join("");
+      box.querySelectorAll(".jrow").forEach(row => {
+        row.querySelector("[data-status]").addEventListener("change", async e => {
+          try { await api("/api/jobs/" + row.dataset.id + "/status", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: e.target.value }) }); }
+          catch (err) { if (err.message !== "unauthorized") showError(err.message); }
+        });
+      });
+    } catch (e) { /* 401 redirected */ }
+  }
+
+  /* ---------- Init ---------- */
+  (async () => {
+    try {
+      const resumes = await api("/api/resumes");
+      if (resumes.length) latestResumeId = resumes[0].id;
+    } catch (e) { /* ignore */ }
+    loadPrefs();
+    loadSaved();
+  })();
+})();
+</script>
+</body>
+</html>
