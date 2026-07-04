@@ -88,12 +88,8 @@ def _fetch_github_api(api_url, params=None):
                 f"💡 Tip: Set GITHUB_TOKEN environment variable to increase rate limits (60/hour → 5000/hour)"
             )
 
-            if wait_seconds > 0:
-                logger.info(
-                    f"⏳ Proactively sleeping for {wait_seconds} seconds until rate limit resets..."
-                )
-                time.sleep(wait_seconds)
-                print(f"✅ Rate limit should be reset now. Continuing...")
+            # Never sleep here: this runs inside web requests. Continue with
+            # what we have; exhausted calls return non-200 and are skipped.
         elif remaining < 100:
             logger.info(
                 f"ℹ️  GitHub API rate limit: {remaining}/{limit} requests remaining"
@@ -230,9 +226,16 @@ def fetch_all_github_repos(github_url: str, max_repos: int = 100) -> List[Dict]:
 
         if status_code == 200:
             projects = []
+            # ponytail: contributor lookups cost 1 API call per repo; cap at the
+            # 20 most recently updated to stay inside unauthenticated limits
+            MAX_DETAILED_REPOS = 20
+            processed = 0
             for repo in repos_data:
+                if processed >= MAX_DETAILED_REPOS:
+                    break
                 if repo.get("fork") and repo.get("forks_count", 0) < 5:
                     continue
+                processed += 1
 
                 repo_name = repo.get("name")
 

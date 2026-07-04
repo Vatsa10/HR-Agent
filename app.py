@@ -5,6 +5,7 @@ POST /api/analyze  -> starts the multi-agent pipeline in a thread, returns job i
 GET  /api/jobs/{id} -> current stage + result when finished
 """
 
+import json
 import logging
 import tempfile
 import threading
@@ -23,8 +24,31 @@ app = FastAPI(title="HR-Agent")
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-# ponytail: in-memory job store, swap for redis if this ever runs multi-worker
+# Stateful job store: in-memory for live polling, finished jobs persisted to
+# cache/jobs/ so results survive server restarts.
+# ponytail: JSON files, swap for redis/sqlite if this ever runs multi-worker
 JOBS: dict = {}
+JOBS_DIR = Path("cache") / "jobs"
+
+
+def _persist_job(job_id: str, job: dict):
+    try:
+        JOBS_DIR.mkdir(parents=True, exist_ok=True)
+        (JOBS_DIR / f"{job_id}.json").write_text(
+            json.dumps(job, ensure_ascii=False), encoding="utf-8"
+        )
+    except OSError as e:
+        logger.warning(f"Failed to persist job {job_id}: {e}")
+
+
+def _load_job(job_id: str):
+    f = JOBS_DIR / f"{job_id}.json"
+    if f.exists():
+        try:
+            return json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+    return None
 
 STAGE_LABELS = {
     "parse": "Parser Agent reading the resume",
@@ -71,10 +95,12 @@ def _run_job(job_id: str, pdf_path: str, jd_url: str, jd_text: str):
             "errors": final.get("errors", []),
         }
         job["status"] = "done"
+        _persist_job(job_id, job)
     except Exception as e:
         logger.exception("Job failed")
         job["status"] = "error"
         job["error"] = str(e)
+        _persist_job(job_id, job)
     finally:
         try:
             Path(pdf_path).unlink(missing_ok=True)
@@ -109,7 +135,7 @@ async def analyze(
 
 @app.get("/api/jobs/{job_id}")
 async def job_status(job_id: str):
-    job = JOBS.get(job_id)
+    job = JOBS.get(job_id) or _load_job(job_id)
     if not job:
         return JSONResponse({"error": "Unknown job"}, status_code=404)
     payload = {

@@ -44,14 +44,41 @@ def _append_error(state: PipelineState, msg: str):
 
 
 def parser_agent(state: PipelineState) -> PipelineState:
-    """ParserAgent — unique tool: PDF-to-JSONResume extraction."""
-    from pdf import PDFHandler
+    """ParserAgent — unique tool: PDF-to-JSONResume extraction.
 
-    logger.info("🤖 ParserAgent: extracting resume from PDF")
-    resume_data = PDFHandler().extract_json_from_pdf(state["pdf_path"])
-    if resume_data is None:
-        raise ValueError("Failed to extract resume data from PDF")
+    Stateful: results cached by PDF content hash, so re-analyzing the same
+    resume skips all LLM extraction calls.
+    """
+    import hashlib
+    import json
+    from pathlib import Path
+
+    from pdf import PDFHandler
     from transform import convert_json_resume_to_text
+
+    pdf_bytes = Path(state["pdf_path"]).read_bytes()
+    digest = hashlib.sha256(pdf_bytes).hexdigest()[:16]
+    cache_file = Path("cache") / f"resume_{digest}.json"
+
+    resume_data = None
+    if cache_file.exists():
+        try:
+            resume_data = JSONResume(
+                **json.loads(cache_file.read_text(encoding="utf-8"))
+            )
+            logger.info(f"🤖 ParserAgent: cache hit ({cache_file.name})")
+        except Exception:
+            resume_data = None
+
+    if resume_data is None:
+        logger.info("🤖 ParserAgent: extracting resume from PDF")
+        resume_data = PDFHandler().extract_json_from_pdf(state["pdf_path"])
+        if resume_data is None:
+            raise ValueError("Failed to extract resume data from PDF")
+        cache_file.parent.mkdir(exist_ok=True)
+        cache_file.write_text(
+            json.dumps(resume_data.model_dump(), ensure_ascii=False), encoding="utf-8"
+        )
 
     state["resume_data"] = resume_data
     state["resume_text"] = convert_json_resume_to_text(resume_data)

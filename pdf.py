@@ -286,17 +286,24 @@ class PDFHandler:
             "meta": None,
         }
 
-        for section_name in sections:
-            section_data = self._extract_section_data(text_content, section_name)
+        # Extract all sections concurrently — each is an independent LLM call
+        from concurrent.futures import ThreadPoolExecutor
 
-            if section_data:
-                complete_resume.update(section_data)
-                logger.debug(f"✅ Successfully extracted {section_name} section")
-            else:
-                logger.error(
-                    f"⚠️ Failed to extract {section_name} section. Aborting extraction to prevent partial/invalid resume data."
-                )
-                return None
+        with ThreadPoolExecutor(max_workers=len(sections)) as pool:
+            futures = {
+                name: pool.submit(self._extract_section_data, text_content, name)
+                for name in sections
+            }
+            for section_name, future in futures.items():
+                section_data = future.result()
+                if section_data:
+                    complete_resume.update(section_data)
+                    logger.debug(f"✅ Successfully extracted {section_name} section")
+                else:
+                    logger.error(
+                        f"⚠️ Failed to extract {section_name} section. Aborting extraction to prevent partial/invalid resume data."
+                    )
+                    return None
 
         try:
             if complete_resume.get("basics") and isinstance(
