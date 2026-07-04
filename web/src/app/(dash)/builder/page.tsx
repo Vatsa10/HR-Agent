@@ -5,7 +5,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api } from "@/lib/api";
-import { Button, Card, Field, Select, Spinner, ErrorInline } from "@/components/ui";
+import { Button, Card, Field, Input, Select, Textarea, Spinner, ErrorInline } from "@/components/ui";
 import { cn } from "@/lib/format";
 
 /* ------------------------------------------------------------------ *
@@ -177,14 +177,25 @@ function BuilderInner() {
   const [saveLabel, setSaveLabel] = useState("Save");
   const [error, setError] = useState<string | null>(null);
 
-  // Load resumes + JDs, then apply ?jd= / ?resume= deep-link preselect.
+  // Profile context (GitHub, LinkedIn, extra material) — secondary context the
+  // builder folds in. Lives here so tailoring can be tuned without leaving.
+  const [github, setGithub] = useState("");
+  const [linkedinUrl, setLinkedinUrl] = useState("");
+  const [linkedinResumeId, setLinkedinResumeId] = useState("");
+  const [blocks, setBlocks] = useState<ExtraBlock[]>([]);
+  const [ctxSave, setCtxSave] = useState("Save context");
+
+  const linkedinResumes = resumes.filter((r) => (r.filename || "").startsWith("LinkedIn:"));
+
+  // Load resumes + JDs + profile, then apply ?jd= / ?resume= deep-link preselect.
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const [r, j] = await Promise.all([
+        const [r, j, me] = await Promise.all([
           api<ResumeRow[]>("/resumes"),
           api<JdRow[]>("/jds"),
+          api<{ github_url?: string; extras?: Record<string, unknown> }>("/me"),
         ]);
         if (!alive) return;
         setResumes(r);
@@ -194,6 +205,20 @@ function BuilderInner() {
         if (qResume && r.some((x) => String(x.id) === qResume)) setResumeId(qResume);
         else if (r.length) setResumeId(String(r[0].id));
         if (qJd && j.some((x) => String(x.id) === qJd)) setJdId(qJd);
+        // profile context
+        setGithub(me.github_url || "");
+        const ex = (me.extras || {}) as Record<string, unknown>;
+        setLinkedinUrl(typeof ex.linkedin_url === "string" ? ex.linkedin_url : "");
+        setLinkedinResumeId(ex.linkedin_resume_id ? String(ex.linkedin_resume_id) : "");
+        if (Array.isArray(ex.blocks)) {
+          setBlocks(ex.blocks as ExtraBlock[]);
+        } else {
+          // legacy flat extras -> blocks
+          const legacy = Object.entries(ex)
+            .filter(([k]) => !["blocks", "linkedin_url", "linkedin_resume_id"].includes(k))
+            .map(([k, v]) => ({ title: k, body: typeof v === "string" ? v : JSON.stringify(v) }));
+          setBlocks(legacy);
+        }
       } catch (e) {
         if (alive && e instanceof Error && e.message !== "unauthorized") setError(e.message);
       } finally {
@@ -204,6 +229,28 @@ function BuilderInner() {
       alive = false;
     };
   }, [searchParams]);
+
+  async function saveContext() {
+    setCtxSave("Saving...");
+    try {
+      await api("/me", {
+        method: "PUT",
+        body: {
+          github_url: github.trim(),
+          extras: {
+            blocks: blocks.filter((b) => (b.title || "").trim() || (b.body || "").trim()),
+            linkedin_url: linkedinUrl.trim(),
+            linkedin_resume_id: linkedinResumeId || null,
+          },
+        },
+      });
+      setCtxSave("Saved");
+      setTimeout(() => setCtxSave("Save context"), 2000);
+    } catch (e) {
+      setCtxSave("Save context");
+      if (e instanceof Error && e.message !== "unauthorized") setError(e.message);
+    }
+  }
 
   /** Read every editable node back into a fresh content object. */
   function syncFromDom(): ResumeContent | null {
@@ -317,11 +364,8 @@ function BuilderInner() {
             <div>
               <h2 className="text-sm font-semibold text-ink">Generate</h2>
               <p className="mt-1 text-xs text-ink-faint">
-                Profile context (GitHub, LinkedIn, extra material) now lives in{" "}
-                <Link href="/settings" className="text-blue hover:underline">
-                  Settings
-                </Link>
-                . The builder folds it in automatically.
+                Your resume is the main content. GitHub and LinkedIn below are secondary
+                context, used to enrich and fill gaps, never to replace facts.
               </p>
             </div>
 
@@ -382,6 +426,105 @@ function BuilderInner() {
             </p>
 
             {error && <ErrorInline>{error}</ErrorInline>}
+          </Card>
+
+          {/* ---------------- Context (secondary) ---------------- */}
+          <Card className="space-y-4">
+            <div>
+              <h2 className="text-sm font-semibold text-ink">Context</h2>
+              <p className="mt-1 text-xs text-ink-faint">
+                Secondary material the builder folds in. Also editable in Settings.
+              </p>
+            </div>
+
+            <Field label="GitHub URL" hint="secondary" htmlFor="gh">
+              <Input
+                id="gh"
+                type="url"
+                placeholder="https://github.com/you"
+                value={github}
+                onChange={(e) => setGithub(e.target.value)}
+              />
+            </Field>
+
+            <Field label="LinkedIn profile" hint="secondary" htmlFor="li-sel">
+              <Select
+                id="li-sel"
+                value={linkedinResumeId}
+                onChange={(e) => setLinkedinResumeId(e.target.value)}
+              >
+                <option value="">None</option>
+                {linkedinResumes.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.filename}
+                  </option>
+                ))}
+              </Select>
+              <p className="text-xs text-ink-faint">
+                Pick an imported profile (instant), or paste a URL to fetch live.{" "}
+                <Link href="/linkedin" className="text-blue hover:underline">
+                  Import one
+                </Link>
+                .
+              </p>
+              <Input
+                type="url"
+                placeholder="or https://www.linkedin.com/in/you"
+                value={linkedinUrl}
+                onChange={(e) => setLinkedinUrl(e.target.value)}
+              />
+            </Field>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-ink-soft">Your content</span>
+                <button
+                  type="button"
+                  onClick={() => setBlocks((b) => [...b, { title: "", body: "" }])}
+                  className="text-xs font-medium text-blue hover:underline"
+                >
+                  Add block
+                </button>
+              </div>
+              <p className="text-xs text-ink-faint">
+                Certifications, publications, talks, anything not in the resume.
+              </p>
+              {blocks.map((blk, i) => (
+                <div key={i} className="space-y-1.5 rounded-lg border border-line bg-surface p-2.5">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      className="h-8 text-[13px]"
+                      placeholder="Title (e.g. Certifications)"
+                      value={blk.title || ""}
+                      onChange={(e) =>
+                        setBlocks((bs) => bs.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))
+                      }
+                    />
+                    <button
+                      type="button"
+                      aria-label="Remove block"
+                      onClick={() => setBlocks((bs) => bs.filter((_, j) => j !== i))}
+                      className="text-ink-faint hover:text-bad"
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <Textarea
+                    rows={3}
+                    className="text-[13px]"
+                    placeholder="Body text. One item per line works well."
+                    value={blk.body || ""}
+                    onChange={(e) =>
+                      setBlocks((bs) => bs.map((x, j) => (j === i ? { ...x, body: e.target.value } : x)))
+                    }
+                  />
+                </div>
+              ))}
+            </div>
+
+            <Button variant="ghost" size="sm" onClick={saveContext} className="w-full">
+              {ctxSave}
+            </Button>
           </Card>
 
           {notes.length > 0 && (

@@ -13,6 +13,7 @@ fastapi>=0.110.0
 uvicorn>=0.29.0
 python-multipart>=0.0.9
 psycopg[binary]>=3.1
+psycopg_pool>=3.2
 # LinkedIn access: the extractor is vendored into ./linkedin_mcp_server (our
 # code now). These are its third-party runtime dependencies.
 patchright>=1.40.0
@@ -20,4 +21,3 @@ fastmcp>=3.0.0
 cryptography>=48.0.1
 inquirer>=3.4.0
 packaging>=23.0
-psycopg[binary]>=3.1
