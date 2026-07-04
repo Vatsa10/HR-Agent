@@ -685,7 +685,11 @@ async def api_companies_track(request: Request):
 def _run_find_hr(job_id: str, company_id: int, company_name: str, user_id: int):
     job = JOBS[job_id]
     try:
-        recruiters = hr_finder.find_recruiters(company_name)
+        prefs = db.get_job_prefs(user_id) or {}
+        location = (prefs.get("location") or "").strip() or None
+        roles = prefs.get("roles") or []
+        role = roles[0] if roles else None
+        recruiters = hr_finder.find_recruiters(company_name, location=location, role=role)
         contacts = []
         for r in recruiters:
             cid = db.add_hr_contact(

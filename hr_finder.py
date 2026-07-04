@@ -47,10 +47,21 @@ def _parse_people(result, cap=6):
     return out
 
 
-def find_recruiters(company_name, location=None):
-    """Return up to 6 recruiter-ish contacts at company_name. Best-effort, [] on failure."""
+def find_recruiters(company_name, location=None, role=None):
+    """Return up to 6 recruiter-ish contacts at company_name, biased to the
+    user's target role and location. Best-effort, [] on failure.
+
+    role narrows to recruiters who hire for that function (e.g. an "AI
+    Engineer" seeker gets "engineering"/"technical" recruiters ranked first);
+    location filters to recruiters in the desired region.
+    """
+    # Keyword bias: recruiters who hire for the target function.
+    kw = "recruiter"
+    if role:
+        kw = f"{role} recruiter"
+
     try:
-        res = linkedin_service.company_employees(company_name, keywords="recruiter")
+        res = linkedin_service.company_employees(company_name, keywords=kw)
         people = _parse_people(res)
         if people:
             return people
@@ -58,9 +69,10 @@ def find_recruiters(company_name, location=None):
         logger.warning("company_employees failed for %s: %s", company_name, e)
 
     try:
-        res = linkedin_service.search_people(
-            "recruiter OR talent acquisition " + company_name, location=location
-        )
+        query = f"recruiter OR talent acquisition {company_name}"
+        if role:
+            query = f"{role} {query}"
+        res = linkedin_service.search_people(query, location=location)
         return _parse_people(res)
     except Exception as e:  # noqa: BLE001
         logger.warning("search_people fallback failed for %s: %s", company_name, e)
