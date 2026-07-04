@@ -3,6 +3,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { cn } from "@/lib/format";
+import { Logo } from "@/components/Logo";
 
 /* ================================================================== *
  * Scroll-reveal primitive (transform/opacity, --ease)
@@ -336,7 +337,7 @@ export default function Home() {
       <header className="sticky top-0 z-40 border-b border-line/70 bg-paper/85 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3.5">
           <div className="flex items-center gap-2 font-semibold tracking-tight">
-            <span className="grid size-7 place-items-center rounded-md bg-blue text-sm font-bold text-white">D</span>
+            <Logo size={28} />
             <span>Do Apply</span>
           </div>
           <nav className="flex items-center gap-1.5">
@@ -507,7 +508,7 @@ export default function Home() {
       <footer className="border-t border-line">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 py-10 sm:flex-row">
           <div className="flex items-center gap-2 text-sm font-medium text-ink">
-            <span className="grid size-6 place-items-center rounded-md bg-blue text-xs font-bold text-white">D</span>
+            <Logo size={24} />
             Do Apply
           </div>
           <p className="text-sm text-ink-faint">doapply.online</p>

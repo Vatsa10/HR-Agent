@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import { Button, Input, Field, ErrorInline } from "@/components/ui";
+import { Logo } from "@/components/Logo";
 
 type Mode = "signin" | "signup";
 
@@ -60,7 +61,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
     <div className="flex min-h-screen flex-col bg-paper">
       <header className="px-5 py-5 md:px-8">
         <Link href="/" className="inline-flex items-center gap-2 font-semibold tracking-tight text-ink">
-          <span className="grid size-7 place-items-center rounded-md bg-blue text-sm font-bold text-white">D</span>
+          <Logo size={28} />
           <span className="text-[15px]">Do Apply</span>
         </Link>
       </header>

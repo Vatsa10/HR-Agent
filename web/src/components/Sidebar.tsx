@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { Spinner } from "@/components/ui";
+import { Logo } from "@/components/Logo";
 
 interface NavItem {
   href: string;
@@ -51,7 +52,7 @@ function isActive(pathname: string, href: string) {
 function Brand() {
   return (
     <Link href="/analyze" className="flex items-center gap-2 font-semibold tracking-tight text-ink">
-      <span className="grid size-7 place-items-center rounded-md bg-blue text-white text-sm font-bold">D</span>
+      <Logo size={28} />
       <span className="text-[15px]">Do Apply</span>
     </Link>
   );
