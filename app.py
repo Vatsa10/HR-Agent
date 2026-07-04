@@ -436,7 +436,22 @@ async def api_build(request: Request):
     except Exception:
         logger.exception("analysis lookup failed; building without jd match")
 
-    built = build_resume(parsed, jd_text, github_data, user.get("extras") or None, jd_match=jd_match)
+    # LinkedIn is secondary context (like GitHub), never the main resume.
+    linkedin_text = None
+    linkedin_url = (user.get("extras") or {}).get("linkedin_url")
+    if linkedin_url:
+        try:
+            import linkedin_service
+
+            secs = linkedin_service.profile_sections(linkedin_url).get("sections", {})
+            linkedin_text = "\n\n".join(f"## {k}\n{v}" for k, v in secs.items() if v) or None
+        except Exception:
+            logger.exception("linkedin fetch failed; building without linkedin context")
+
+    built = build_resume(
+        parsed, jd_text, github_data, user.get("extras") or None,
+        jd_match=jd_match, linkedin_text=linkedin_text,
+    )
     content = built["content"]
     tailoring_notes = built.get("tailoring_notes") or []
     if tailoring_notes:

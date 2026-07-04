@@ -15,9 +15,15 @@
   <aside class="side">
     <div class="box">
       <h2>Profile</h2>
-      <label for="github">GitHub URL</label>
+      <p class="hint" style="margin:0 0 14px;">Your selected resume is the main content. GitHub and LinkedIn are secondary context: used only to enrich or fill gaps, never to replace the resume.</p>
+
+      <label for="github">GitHub URL <span style="color:var(--ink-faint);font-weight:400;">(secondary)</span></label>
       <input type="url" id="github" placeholder="https://github.com/you">
-      <p class="hint">The GitHub Scout uses this to enrich your resume with real repository evidence.</p>
+      <p class="hint">The GitHub Scout folds in real repository evidence the resume is missing.</p>
+
+      <label for="linkedin" style="margin-top:18px;">LinkedIn URL <span style="color:var(--ink-faint);font-weight:400;">(secondary)</span></label>
+      <input type="url" id="linkedin" placeholder="https://www.linkedin.com/in/you">
+      <p class="hint">Used only to recover a bullet, date, or skill the resume left out.</p>
 
       <label style="margin-top:18px;">Your content</label>
       <p class="hint" style="margin:0 0 10px;">Blocks of extra material the builder can draw on: certifications, publications, talks, anything not in the PDF.</p>
@@ -113,14 +119,15 @@
   async function loadProfile() {
     const me = await api("/api/me");
     $("github").value = me.github_url || "";
-    $("blocks").innerHTML = "";
     const extras = me.extras || {};
+    $("linkedin").value = extras.linkedin_url || "";
+    $("blocks").innerHTML = "";
     if (Array.isArray(extras.blocks)) {
       extras.blocks.forEach(b => addBlock(b.title || "", b.body || ""));
     } else {
       // backward compat: old flat {key: value} dict -> blocks
       for (const [k, v] of Object.entries(extras)) {
-        if (k === "blocks") continue;
+        if (k === "blocks" || k === "linkedin_url") continue;
         addBlock(k, typeof v === "string" ? v : JSON.stringify(v));
       }
     }
@@ -131,7 +138,7 @@
       await api("/api/me", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ github_url: $("github").value.trim(), extras: { blocks: readBlocks() } }),
+        body: JSON.stringify({ github_url: $("github").value.trim(), extras: { blocks: readBlocks(), linkedin_url: $("linkedin").value.trim() } }),
       });
       $("profile-saved").classList.remove("hidden");
       setTimeout(() => $("profile-saved").classList.add("hidden"), 2500);

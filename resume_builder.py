@@ -18,7 +18,9 @@ Rules (follow strictly):
 - Rewrite every work/project bullet impact-first: strong action verb + what was done + measurable outcome where the source material supports it.
 - Keep facts truthful. NEVER invent employers, job titles, dates, metrics, degrees, or skills not present in the provided material.
 - If a JOB DESCRIPTION is provided, front-load the skills and experience matching its must-have requirements (order skills and highlights so JD matches appear first). Do not fabricate matches.
+- The CURRENT RESUME is the single source of truth for the main sections (summary, work, projects, education, skills). GITHUB DATA and LINKEDIN DATA are SECONDARY CONTEXT ONLY: use them to enrich or fill gaps the resume omits (a missing bullet, date, metric, project, or skill), never to replace or contradict the resume's own facts, and never as main content on their own.
 - If GITHUB DATA is provided, fold its top projects into the "projects" section when they are missing from the resume, using only real repo names/descriptions/languages.
+- If LINKEDIN DATA is provided, use it only to supplement the resume: recover a bullet, date, location, or skill that the resume left out but LinkedIn confirms. Do not add whole sections from LinkedIn that the candidate did not put on the resume, and never fabricate.
 - If EXTRA SECTIONS are provided, merge each entry as an additional section under a top-level "extras" object: {{"<section name>": <content>}}.
 - If a JD MATCH ANALYSIS is provided, use it as a tailoring plan:
   * For every requirement with status "partial" or "missing" and kind "must_have": if the candidate's REAL experience in the source material can truthfully support it, surface that buried evidence prominently (rewrite the relevant bullet, summary, or skills entry to make it explicit). NEVER fabricate experience to cover a requirement the material does not support; leave unsupported gaps alone.
@@ -49,8 +51,11 @@ JOB DESCRIPTION:
 JD MATCH ANALYSIS:
 {jd_match}
 
-GITHUB DATA:
+GITHUB DATA (secondary context):
 {github}
+
+LINKEDIN DATA (secondary context):
+{linkedin}
 
 EXTRA SECTIONS:
 {extras}
@@ -209,6 +214,7 @@ def build_resume(
     github_data: Optional[dict] = None,
     extras: Optional[dict] = None,
     jd_match: Optional[dict] = None,
+    linkedin_text: Optional[str] = None,
 ) -> dict:
     """Improve a parsed resume via one LLM call.
 
@@ -225,6 +231,7 @@ def build_resume(
         jd=jd_text or "(none provided)",
         jd_match=json.dumps(jd_match, indent=2, default=str) if jd_match else "(none provided)",
         github=json.dumps(github_data, indent=2, default=str) if github_data else "(none provided)",
+        linkedin=linkedin_text or "(none provided)",
         extras=json.dumps(extras, indent=2, default=str) if extras else "(none provided)",
     )
     content = None
