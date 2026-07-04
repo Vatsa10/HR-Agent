@@ -36,7 +36,16 @@ app = FastAPI(title="HR-Agent")
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-COOKIE_KW = dict(httponly=True, samesite="lax", secure=False)
+# Persistent session cookie so users stay signed in across browser restarts.
+# secure/samesite flip via env for cross-site prod (Vercel front, Render API).
+import os as _os
+
+COOKIE_KW = dict(
+    httponly=True,
+    samesite=_os.environ.get("COOKIE_SAMESITE", "lax"),
+    secure=_os.environ.get("COOKIE_SECURE", "") == "1",
+    max_age=60 * 60 * 24 * 30,  # 30 days
+)
 
 # Stateful job store: in-memory for live polling, finished jobs persisted to
 # cache/jobs/ so results survive server restarts.
@@ -96,6 +105,7 @@ STAGE_LABELS = {
     "linkedin": "LinkedIn Agent importing the profile",
     "search": "Searching LinkedIn jobs and scoring fit",
     "hr": "Finding recruiters at the company",
+    "build": "Rewriting your resume",
 }
 
 
@@ -401,6 +411,75 @@ async def api_jds(request: Request):
 
 # ---------------- resume builder ----------------
 
+def _run_build(job_id, user, resume_id, jd_id, jd_text, parsed):
+    """Background: GitHub + LinkedIn enrichment + LLM rewrite. Slow (2 LLM
+    calls + possible API fan-out), so it must not block the request."""
+    job = JOBS[job_id]
+    try:
+        github_data = None
+        if user.get("github_url"):
+            try:
+                job["stage"] = "github"
+                from github import fetch_and_display_github_info
+
+                github_data = fetch_and_display_github_info(user["github_url"]) or None
+            except Exception:
+                logger.exception("github fetch failed; building without github data")
+
+        jd_match = None
+        try:
+            analysis = db.get_latest_analysis_for(user["id"], resume_id, jd_id)
+            if analysis and isinstance(analysis.get("result"), dict):
+                jd_match = analysis["result"].get("jd_match")
+        except Exception:
+            logger.exception("analysis lookup failed; building without jd match")
+
+        # LinkedIn secondary context: prefer an imported profile (instant),
+        # fall back to a live URL fetch only if none selected.
+        linkedin_text = None
+        extras_cfg = user.get("extras") or {}
+        li_resume_id = extras_cfg.get("linkedin_resume_id")
+        if li_resume_id:
+            li_row = db.get_resume(int(li_resume_id), user["id"])
+            if li_row and li_row.get("parsed"):
+                try:
+                    linkedin_text = json_resume_to_markdown(li_row["parsed"]) or None
+                except Exception:
+                    logger.exception("linkedin resume render failed")
+        if not linkedin_text and extras_cfg.get("linkedin_url"):
+            try:
+                import linkedin_service
+
+                job["stage"] = "linkedin"
+                secs = linkedin_service.profile_sections(extras_cfg["linkedin_url"]).get("sections", {})
+                linkedin_text = "\n\n".join(f"## {k}\n{v}" for k, v in secs.items() if v) or None
+            except Exception:
+                logger.exception("linkedin fetch failed; building without linkedin context")
+
+        job["stage"] = "build"
+        built = build_resume(
+            parsed, jd_text, github_data, extras_cfg or None,
+            jd_match=jd_match, linkedin_text=linkedin_text,
+        )
+        content = built["content"]
+        tailoring_notes = built.get("tailoring_notes") or []
+        if tailoring_notes:
+            content["_tailoring_notes"] = tailoring_notes
+        gen_id = db.save_generated(user["id"], resume_id, jd_id, content, built["markdown"])
+        job["result"] = {
+            "id": gen_id,
+            "content": content,
+            "markdown": built["markdown"],
+            "tailoring_notes": tailoring_notes,
+        }
+        job["status"] = "done"
+    except Exception as e:
+        logger.exception("build failed")
+        job["status"] = "error"
+        job["error"] = str(e)
+    _persist_job(job_id, job)
+
+
 @app.post("/api/build")
 async def api_build(request: Request):
     user = current_user(request)
@@ -419,61 +498,14 @@ async def api_build(request: Request):
             return JSONResponse({"error": "jd not found"}, status_code=404)
         jd_text = jd_row["text"]
 
-    parsed = resume_row["parsed"] or {}
-    github_data = None
-    if user.get("github_url"):
-        try:
-            from github import fetch_and_display_github_info
-
-            github_data = fetch_and_display_github_info(user["github_url"]) or None
-        except Exception:
-            logger.exception("github fetch failed; building without github data")
-
-    jd_match = None
-    try:
-        analysis = db.get_latest_analysis_for(user["id"], resume_id, jd_id)
-        if analysis and isinstance(analysis.get("result"), dict):
-            jd_match = analysis["result"].get("jd_match")
-    except Exception:
-        logger.exception("analysis lookup failed; building without jd match")
-
-    # LinkedIn is secondary context (like GitHub), never the main resume.
-    # Prefer an already-imported LinkedIn profile (instant); fall back to a
-    # live URL fetch only if no import is selected.
-    linkedin_text = None
-    extras_cfg = user.get("extras") or {}
-    li_resume_id = extras_cfg.get("linkedin_resume_id")
-    if li_resume_id:
-        li_row = db.get_resume(int(li_resume_id), user["id"])
-        if li_row and li_row.get("parsed"):
-            try:
-                linkedin_text = json_resume_to_markdown(li_row["parsed"]) or None
-            except Exception:
-                logger.exception("linkedin resume render failed")
-    if not linkedin_text and extras_cfg.get("linkedin_url"):
-        try:
-            import linkedin_service
-
-            secs = linkedin_service.profile_sections(extras_cfg["linkedin_url"]).get("sections", {})
-            linkedin_text = "\n\n".join(f"## {k}\n{v}" for k, v in secs.items() if v) or None
-        except Exception:
-            logger.exception("linkedin fetch failed; building without linkedin context")
-
-    built = build_resume(
-        parsed, jd_text, github_data, user.get("extras") or None,
-        jd_match=jd_match, linkedin_text=linkedin_text,
-    )
-    content = built["content"]
-    tailoring_notes = built.get("tailoring_notes") or []
-    if tailoring_notes:
-        content["_tailoring_notes"] = tailoring_notes
-    gen_id = db.save_generated(user["id"], resume_id, jd_id, content, built["markdown"])
-    return {
-        "id": gen_id,
-        "content": content,
-        "markdown": built["markdown"],
-        "tailoring_notes": tailoring_notes,
-    }
+    job_id = uuid.uuid4().hex
+    JOBS[job_id] = {"status": "running", "stage": "build"}
+    threading.Thread(
+        target=_run_build,
+        args=(job_id, user, resume_id, jd_id, jd_text, resume_row["parsed"] or {}),
+        daemon=True,
+    ).start()
+    return {"job_id": job_id}
 
 
 @app.get("/api/generated/{gen_id}")

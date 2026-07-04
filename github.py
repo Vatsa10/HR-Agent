@@ -226,9 +226,10 @@ def fetch_all_github_repos(github_url: str, max_repos: int = 100) -> List[Dict]:
 
         if status_code == 200:
             projects = []
-            # ponytail: contributor lookups cost 1 API call per repo; cap at the
-            # 20 most recently updated to stay inside unauthenticated limits
-            MAX_DETAILED_REPOS = 20
+            # Contributor lookups cost 1 API call per repo. With a GITHUB_TOKEN
+            # (5000/hr) process all repos; without one, cap at 20 to stay inside
+            # the 60/hr unauthenticated limit. Results are cached per repo.
+            MAX_DETAILED_REPOS = 200 if os.environ.get("GITHUB_TOKEN") else 20
             processed = 0
             for repo in repos_data:
                 if processed >= MAX_DETAILED_REPOS:

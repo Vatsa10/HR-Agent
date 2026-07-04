@@ -4,7 +4,7 @@ import * as React from "react";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { api } from "@/lib/api";
+import { api, pollJob } from "@/lib/api";
 import { Button, Card, Field, Input, Select, Textarea, Spinner, ErrorInline } from "@/components/ui";
 import { cn } from "@/lib/format";
 
@@ -275,10 +275,13 @@ function BuilderInner() {
     setGenerating(true);
     setError(null);
     try {
-      const data = await api<BuildResult>("/build", {
+      // Build runs as a background job (GitHub + LinkedIn enrichment + rewrite
+      // is slow); start it and poll so the request never hangs.
+      const { job_id } = await api<{ job_id: string }>("/build", {
         method: "POST",
         body: { resume_id: Number(resumeId), jd_id: jdId ? Number(jdId) : null },
       });
+      const data = await pollJob<BuildResult>(job_id);
       setGenId(data.id);
       setContent(data.content);
       setMarkdown(data.markdown || "");
