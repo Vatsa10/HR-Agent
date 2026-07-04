@@ -1,26 +1,30 @@
 """LinkedIn data access via the vendored linkedin-mcp-server extractor.
 
-The stickerdaniel/linkedin-mcp-server extractor navigates LinkedIn's dedicated
-detail pages (/details/experience/ etc.) and is actively maintained against
-LinkedIn's DOM churn, so it returns full profile sections, job search, and
-people search where a hand-rolled card scraper does not.
+The extractor navigates LinkedIn's dedicated detail pages and is maintained
+against LinkedIn's DOM churn, returning full profile/job/people data.
 
-We drive its LinkedInExtractor directly with a Patchright context seeded from
-our existing linkedin_session.json cookie (no interactive --login needed).
+PERFORMANCE: a warm browser. One persistent Patchright context lives on a
+dedicated background event-loop thread and is reused across every call, so we
+pay the ~2-4s Chromium cold start once instead of per request. A small pool of
+pages allows a couple of scrapes to run in parallel. If the warm browser fails
+to boot (e.g. no session), calls fall back to a per-call cold context.
 
-All public functions are synchronous and safe to call from worker threads
-(each wraps asyncio.run). ponytail: a fresh browser context per call adds
-~2-3s cold-start; if per-job-detail loops need it, host one warm browser on a
-dedicated event-loop thread.
+All public functions are synchronous and safe to call from FastAPI worker
+threads: they submit a coroutine onto the warm loop and block for the result.
 """
 
 import asyncio
+import atexit
 import json
+import logging
 import os
+import threading
 
-# The linkedin_mcp_server extractor is vendored into this repo (./linkedin_mcp_server),
-# it is our code now; only its third-party libs are pip dependencies.
 from linkedin_common import has_session, session_path
+
+logger = logging.getLogger(__name__)
+
+_POOL_SIZE = int(os.environ.get("LI_POOL_SIZE", "2"))
 
 
 def _require_session():
@@ -31,20 +35,113 @@ def _require_session():
         )
 
 
-async def _with_extractor(fn):
-    """Launch a cookie-seeded Patchright context, run fn(extractor), clean up."""
+def _profile_dir():
+    return os.path.join(os.environ.get("TEMP", "/tmp"), "hr_agent_li_profile")
+
+
+class _WarmBrowser:
+    """A persistent Patchright browser on its own event-loop thread."""
+
+    def __init__(self):
+        self._loop = None
+        self._thread = None
+        self._ready = threading.Event()
+        self._boot_error = None
+        self._ctx = None
+        self._pw = None
+        self._pages = None  # asyncio.Queue[Page]
+        self._start_lock = threading.Lock()
+        self._started = False
+
+    def _ensure_started(self):
+        with self._start_lock:
+            if self._started:
+                return
+            self._thread = threading.Thread(
+                target=self._thread_main, name="linkedin-browser", daemon=True
+            )
+            self._thread.start()
+            self._ready.wait()  # boot done (success or failure)
+            self._started = True
+        if self._boot_error is not None:
+            raise self._boot_error
+
+    def _thread_main(self):
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        try:
+            self._loop.run_until_complete(self._boot())
+        except Exception as e:  # noqa: BLE001
+            self._boot_error = e
+            logger.warning("warm browser boot failed, will use cold fallback: %s", e)
+            self._ready.set()
+            return
+        self._ready.set()
+        self._loop.run_forever()
+
+    async def _boot(self):
+        from patchright.async_api import async_playwright
+
+        state = json.loads(open(session_path(), encoding="utf-8").read())
+        self._pw = await async_playwright().start()
+        self._ctx = await self._pw.chromium.launch_persistent_context(
+            user_data_dir=_profile_dir(), headless=True
+        )
+        await self._ctx.add_cookies(state.get("cookies", []))
+        self._pages = asyncio.Queue()
+        pages = list(self._ctx.pages)
+        while len(pages) < _POOL_SIZE:
+            pages.append(await self._ctx.new_page())
+        for pg in pages[:_POOL_SIZE]:
+            self._pages.put_nowait(pg)
+        logger.info("warm LinkedIn browser ready (%d pages)", _POOL_SIZE)
+
+    async def _call(self, fn):
+        from linkedin_mcp_server.scraping.extractor import LinkedInExtractor
+
+        page = await self._pages.get()
+        try:
+            return await fn(LinkedInExtractor(page))
+        finally:
+            self._pages.put_nowait(page)
+
+    def run(self, fn):
+        self._ensure_started()
+        fut = asyncio.run_coroutine_threadsafe(self._call(fn), self._loop)
+        return fut.result()
+
+    def shutdown(self):
+        if self._loop and self._loop.is_running():
+            async def _close():
+                try:
+                    if self._ctx:
+                        await self._ctx.close()
+                    if self._pw:
+                        await self._pw.stop()
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                asyncio.run_coroutine_threadsafe(_close(), self._loop).result(timeout=10)
+            except Exception:  # noqa: BLE001
+                pass
+
+
+_warm = _WarmBrowser()
+atexit.register(_warm.shutdown)
+
+
+async def _cold_call(fn):
+    """Fallback: fresh per-call context (used only if the warm browser fails)."""
     from patchright.async_api import async_playwright
-    from linkedin_mcp_server.scraping.extractor import LinkedInExtractor
 
     state = json.loads(open(session_path(), encoding="utf-8").read())
-    profile_dir = os.path.join(
-        os.environ.get("TEMP", "/tmp"), "hr_agent_li_profile"
-    )
     async with async_playwright() as p:
         ctx = await p.chromium.launch_persistent_context(
-            user_data_dir=profile_dir, headless=True
+            user_data_dir=_profile_dir() + "_cold", headless=True
         )
         try:
+            from linkedin_mcp_server.scraping.extractor import LinkedInExtractor
+
             await ctx.add_cookies(state.get("cookies", []))
             page = ctx.pages[0] if ctx.pages else await ctx.new_page()
             return await fn(LinkedInExtractor(page))
@@ -54,7 +151,11 @@ async def _with_extractor(fn):
 
 def _run(fn):
     _require_session()
-    return asyncio.run(_with_extractor(fn))
+    try:
+        return _warm.run(fn)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("warm browser call failed, cold fallback: %s", e)
+        return asyncio.run(_cold_call(fn))
 
 
 def _username_from_url(url: str) -> str:
@@ -76,12 +177,12 @@ def profile_sections(profile_url_or_username: str, sections=None) -> dict:
 
 
 def search_jobs(keywords: str, location: str = None, limit: int = 25) -> dict:
-    """Search LinkedIn jobs. Returns {jobs: [...]} with title/company/location/url."""
+    """Search LinkedIn jobs. Returns {job_ids, references, sections}."""
     return _run(lambda ext: ext.search_jobs(keywords=keywords, location=location))
 
 
 def search_people(keywords: str, location: str = None, current_company: str = None) -> dict:
-    """Search LinkedIn people (recruiters etc.). Returns {people: [...]}."""
+    """Search LinkedIn people (recruiters etc.)."""
     return _run(
         lambda ext: ext.search_people(
             keywords=keywords, location=location, current_company=current_company
@@ -90,7 +191,7 @@ def search_people(keywords: str, location: str = None, current_company: str = No
 
 
 def company_employees(company_name: str, keywords: str = None) -> dict:
-    """List employees at a company (optionally keyword-filtered, e.g. 'recruiter')."""
+    """List employees at a company (optionally keyword-filtered)."""
     return _run(lambda ext: ext.get_company_employees(company_name, keywords=keywords))
 
 
@@ -100,15 +201,21 @@ def job_details(job_id: str) -> dict:
 
 
 if __name__ == "__main__":
-    # Live smoke check (needs a valid session). Prints section sizes only.
     import sys as _sys
+    import time as _time
 
     _sys.stdout.reconfigure(encoding="utf-8")
+    logging.disable(logging.WARNING)
     if not has_session():
         print("no session; skipping live check")
     else:
-        r = profile_sections("vatsa-joshi", {"experience", "education"})
-        secs = r.get("sections", {})
-        print("sections:", {k: len(v) for k, v in secs.items()})
-        assert secs.get("experience"), "experience section empty"
-        print("linkedin_service live check OK")
+        t0 = _time.perf_counter()
+        r = profile_sections("vatsa-joshi", {"experience"})
+        t1 = _time.perf_counter()
+        r2 = profile_sections("vatsa-joshi", {"experience"})
+        t2 = _time.perf_counter()
+        print(f"first call (incl. browser boot): {t1 - t0:.1f}s")
+        print(f"second call (warm): {t2 - t1:.1f}s")
+        assert r.get("sections", {}).get("experience"), "experience empty"
+        assert (t2 - t1) < (t1 - t0), "warm call should be faster than cold boot"
+        print("linkedin_service warm-browser check OK")
