@@ -26,7 +26,7 @@ const NAV: NavItem[] = [
   { href: "/builder", label: "Builder", icon: I("M5 3h9l5 5v13H5zM14 3v5h5M8 13h8M8 17h5") },
   { href: "/linkedin", label: "LinkedIn", icon: I("M6 9v9M6 6.5v.01M11 18v-5a2 2 0 0 1 4 0v5M11 18h4M4 4h16v16H4z") },
   { href: "/jobs", label: "Jobs", icon: I("M4 8h16v11H4zM9 8V6a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2") },
-  { href: "/companies", label: "Companies", icon: I("M4 20V6a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v14M14 20V10h5a1 1 0 0 1 1 1v9M3 20h18M7 9h1M7 13h1M10 9h1M10 13h1") },
+  { href: "/people", label: "Find People", icon: I("M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75") },
   { href: "/history", label: "History", icon: I("M3 12a9 9 0 1 0 3-6.7M3 4v4h4M12 8v4l3 2") },
 ];
 

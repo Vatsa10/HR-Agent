@@ -8,7 +8,7 @@ const GUARDED = [
   "/builder",
   "/linkedin",
   "/jobs",
-  "/companies",
+  "/people",
   "/history",
   "/settings",
   "/dashboard",
@@ -21,6 +21,13 @@ export function proxy(req: NextRequest) {
   if (pathname === "/dashboard") {
     const url = req.nextUrl.clone();
     url.pathname = "/analyze";
+    return NextResponse.redirect(url);
+  }
+
+  // /companies (removed) -> /people
+  if (pathname === "/companies" || pathname.startsWith("/companies/")) {
+    const url = req.nextUrl.clone();
+    url.pathname = "/people";
     return NextResponse.redirect(url);
   }
 
@@ -43,6 +50,7 @@ export const config = {
     "/builder/:path*",
     "/linkedin/:path*",
     "/jobs/:path*",
+    "/people/:path*",
     "/companies/:path*",
     "/history/:path*",
     "/settings/:path*",

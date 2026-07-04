@@ -36,6 +36,8 @@ interface Job {
   company?: string;
   location?: string;
   url?: string;
+  score?: number | null;
+  reason?: string | null;
   heuristic_score?: number | null;
   llm_score?: number | null;
   llm_reason?: string | null;
@@ -73,6 +75,23 @@ const MARK_COLOR: Record<string, string> = {
   blue: "text-blue",
   neutral: "text-ink-soft",
 };
+
+/** One unified 0-100 match score: LLM fit when present, else heuristic. */
+function matchScore(job: {
+  score?: number | null;
+  llm_score?: number | null;
+  heuristic_score?: number | null;
+}): number | null {
+  const s = job.score ?? job.llm_score ?? job.heuristic_score;
+  return s == null ? null : s;
+}
+
+/** Tone the Match chip by score: >=75 good, >=50 blue, else warn. */
+function scoreTone(score: number): "good" | "blue" | "warn" {
+  if (score >= 75) return "good";
+  if (score >= 50) return "blue";
+  return "warn";
+}
 
 /* ------------------------------------------------------------------ *
  * Deep match view (compact matcher, reused per card)
@@ -157,13 +176,13 @@ function ResultCard({
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [savedLabel, setSavedLabel] = useState<string | null>(null);
-  const [tracking, setTracking] = useState(false);
-  const [trackedLabel, setTrackedLabel] = useState<string | null>(null);
   const [tailoring, setTailoring] = useState(false);
   const [deepLoading, setDeepLoading] = useState(false);
   const [deep, setDeep] = useState<JdMatch | null>(null);
 
   const seen = job.seen === true;
+  const score = matchScore(job);
+  const reason = job.reason || job.llm_reason || "";
 
   const guard = (fn: () => Promise<void>) => async () => {
     try {
@@ -184,20 +203,6 @@ function ResultCard({
       onSaved();
     } finally {
       setSaving(false);
-    }
-  });
-
-  const onTrack = guard(async () => {
-    if (!job.company) {
-      onError("No company on this job");
-      return;
-    }
-    setTracking(true);
-    try {
-      await api("/companies/track", { method: "POST", body: { name: job.company } });
-      setTrackedLabel("Tracked");
-    } finally {
-      setTracking(false);
     }
   });
 
@@ -251,20 +256,15 @@ function ResultCard({
         </p>
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5">
-        {job.heuristic_score != null && (
-          <Badge tone="neutral" mono title="Instant heuristic score">
-            match {Math.round(job.heuristic_score)}
+      {score != null && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge tone={scoreTone(score)} mono title="Match score against your resume">
+            Match {Math.round(score)}
           </Badge>
-        )}
-        {job.llm_score != null && (
-          <Badge tone="blue" mono title="LLM fit score against your resume">
-            <StatusDot tone="blue" /> fit {Math.round(job.llm_score)}
-          </Badge>
-        )}
-      </div>
+        </div>
+      )}
 
-      {job.llm_reason && <p className="text-sm leading-relaxed text-ink-soft">{job.llm_reason}</p>}
+      {reason && <p className="text-sm leading-relaxed text-ink-soft">{reason}</p>}
 
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="ghost" size="sm" onClick={onSave} loading={saving} disabled={!!savedLabel}>
@@ -272,9 +272,6 @@ function ResultCard({
         </Button>
         <Button variant="ghost" size="sm" onClick={onTailor} loading={tailoring}>
           Tailor resume
-        </Button>
-        <Button variant="ghost" size="sm" onClick={onTrack} loading={tracking} disabled={!!trackedLabel}>
-          {trackedLabel || "Track company"}
         </Button>
         <Button variant="ghost" size="sm" onClick={onDeep} loading={deepLoading}>
           Deep match
@@ -473,7 +470,11 @@ export default function JobsPage() {
 
   const sortedResults = useMemo(() => {
     if (!results) return null;
-    return results.slice().sort((a, b) => Number(a.seen === true) - Number(b.seen === true));
+    // Backend already drops data-less rows; guard against any empty title too.
+    return results
+      .filter((j) => (j.title || "").trim())
+      .slice()
+      .sort((a, b) => Number(a.seen === true) - Number(b.seen === true));
   }, [results]);
 
   const setSavedStatus = async (id: number, status: string) => {
@@ -504,8 +505,8 @@ export default function JobsPage() {
       <header className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight text-ink">Jobs</h1>
         <p className="max-w-2xl text-sm leading-relaxed text-ink-soft">
-          Search LinkedIn for roles that match your preferences. Each result gets an instant
-          heuristic score, and the top picks get a deeper LLM fit score against your latest resume.
+          Search LinkedIn for roles that match your preferences. Every result gets one Match score
+          against your latest resume, with a one-line reason for the top picks.
         </p>
       </header>
 
@@ -668,17 +669,18 @@ export default function JobsPage() {
                     {j.company || ""}
                     {j.location ? ` · ${j.location}` : ""}
                   </p>
-                  {j.llm_reason && <p className="mt-1 text-xs text-ink-faint">{j.llm_reason}</p>}
+                  {(j.reason || j.llm_reason) && (
+                    <p className="mt-1 text-xs text-ink-faint">{j.reason || j.llm_reason}</p>
+                  )}
                 </div>
-                {j.llm_score != null ? (
-                  <Badge tone="blue" mono>
-                    fit {Math.round(j.llm_score)}
-                  </Badge>
-                ) : j.heuristic_score != null ? (
-                  <Badge tone="neutral" mono>
-                    match {Math.round(j.heuristic_score)}
-                  </Badge>
-                ) : null}
+                {(() => {
+                  const s = matchScore(j);
+                  return s == null ? null : (
+                    <Badge tone={scoreTone(s)} mono>
+                      Match {Math.round(s)}
+                    </Badge>
+                  );
+                })()}
                 <Select
                   value={j.status || "saved"}
                   onChange={(e) => setSavedStatus(j.id, e.target.value)}

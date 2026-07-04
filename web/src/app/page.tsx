@@ -475,7 +475,7 @@ export default function Home() {
         title="Ask for the right people in plain words"
         body="Type what you want, like recruiters hiring backend roles at a company, and Do Apply reads the intent and returns the people to reach. LinkedIn import fills your profile in one paste."
         media={
-          <BrowserFrame url="doapply.online/companies">
+          <BrowserFrame url="doapply.online/people">
             <RecruiterMock />
           </BrowserFrame>
         }

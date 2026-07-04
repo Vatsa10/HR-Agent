@@ -3,6 +3,7 @@ Job search over LinkedIn: turn a raw job-search result blob into a clean list,
 score jobs against a resume heuristically (pure) and via one batched LLM call.
 """
 
+import concurrent.futures
 import json
 import logging
 import re
@@ -64,8 +65,20 @@ Respond ONLY with JSON of this shape:
 {{"jobs": [{{"li_job_id": "<id>", "title": "<title>", "company": "<company>", "location": "<location>"}}]}}"""
 
 
+def _keep_titled(rows):
+    """Drop rows with an empty/whitespace title.
+
+    LinkedIn returns more job_ids than have real data; those trailing ids parse
+    into title-less rows (the "Untitled role" garbage). Pure, no network.
+    """
+    return [r for r in rows if (r.get("title") or "").strip()]
+
+
 def search(keywords, location=None):
-    """Search LinkedIn jobs and parse into [{li_job_id, title, company, location, url}]."""
+    """Search LinkedIn jobs and parse into [{li_job_id, title, company, location, url}].
+
+    Only real jobs are returned: rows with an empty title are dropped.
+    """
     raw = linkedin_service.search_jobs(keywords, location=location)
     refs = (raw.get("references") or {}).get("search_results") or []
     job_ids = raw.get("job_ids") or []
@@ -107,7 +120,7 @@ def search(keywords, location=None):
             "location": (row.get("location") or "").strip(),
             "url": _abs_url(url),
         })
-    return out
+    return _keep_titled(out)
 
 
 _WORD = re.compile(r"[a-z0-9+#]+")
@@ -193,6 +206,46 @@ def batch_llm_scores(resume_text, jobs):
     return out
 
 
+def score_all(resume_text, jobs, chunk_size=6, max_workers=4):
+    """Score every job by fanning batch_llm_scores over chunks concurrently.
+
+    Splits `jobs` into groups of `chunk_size`, runs `batch_llm_scores` on each
+    group in parallel (ThreadPoolExecutor), and merges results, remapping each
+    chunk's LOCAL indices back to GLOBAL indices into `jobs`.
+
+    Returns [{index, score, reason}] with global indices, one entry per scored
+    job (jobs the LLM omits simply don't appear), sorted by index.
+    """
+    if not resume_text or not jobs:
+        return []
+    chunks = [(start, jobs[start:start + chunk_size])
+              for start in range(0, len(jobs), chunk_size)]
+    results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {}
+        for start, chunk in chunks:
+            fut = ex.submit(batch_llm_scores, resume_text, chunk)
+            futures[fut] = (start, len(chunk))
+        for fut in concurrent.futures.as_completed(futures):
+            start, chunk_len = futures[fut]
+            try:
+                local_scores = fut.result()
+            except Exception as e:  # noqa: BLE001
+                logger.warning("score chunk at %d failed: %s", start, e)
+                continue
+            for s in local_scores:
+                idx = s.get("index")
+                if not isinstance(idx, int) or not (0 <= idx < chunk_len):
+                    continue
+                results.append({
+                    "index": start + idx,
+                    "score": s.get("score"),
+                    "reason": (s.get("reason") or ""),
+                })
+    results.sort(key=lambda r: r["index"])
+    return results
+
+
 if __name__ == "__main__":
     import sys as _sys
     _sys.stdout.reconfigure(encoding="utf-8")
@@ -217,5 +270,43 @@ if __name__ == "__main__":
     assert all("heuristic_score" in j for j in scored)
     # empty job tokens -> 0
     assert heuristic_scores(resume, [{"title": "", "company": "", "location": ""}])[0]["heuristic_score"] == 0.0
+
+    # _keep_titled (pure): empty/whitespace-title rows are dropped
+    rows = [
+        {"li_job_id": "1", "title": "Engineer", "company": "A"},
+        {"li_job_id": "2", "title": "   ", "company": "B"},
+        {"li_job_id": "3", "title": "", "company": "C"},
+        {"li_job_id": "4", "title": "Manager"},
+        {"li_job_id": "5", "company": "D"},  # missing title entirely
+    ]
+    kept = _keep_titled(rows)
+    assert [r["li_job_id"] for r in kept] == ["1", "4"], kept
+
+    # score_all remaps chunk-local indices to global indices (stubbed, no LLM).
+    # Stub returns local index i -> score i, reason = the job title it saw, so a
+    # correct global remap means results[g].reason == title of jobs[g].
+    _orig_batch = batch_llm_scores
+    jobs15 = [{"title": f"J{n}", "company": "C", "location": "L"} for n in range(15)]
+
+    def _stub_batch(resume_text, chunk):
+        return [{"index": i, "score": float(i), "reason": chunk[i]["title"]}
+                for i in range(len(chunk))]
+
+    batch_llm_scores = _stub_batch
+    try:
+        res = score_all("some resume text", jobs15, chunk_size=6, max_workers=4)
+    finally:
+        batch_llm_scores = _orig_batch
+    assert len(res) == 15, res
+    assert [r["index"] for r in res] == list(range(15)), res
+    for r in res:
+        assert r["reason"] == f"J{r['index']}", r  # index remapped to right job
+    # chunk-local score i means global job g in chunk starting at s has score g-s
+    assert res[0]["score"] == 0.0 and res[6]["score"] == 0.0 and res[12]["score"] == 0.0, res
+    assert res[7]["score"] == 1.0, res
+
+    # score_all short-circuits with no resume or no jobs
+    assert score_all("", jobs15) == []
+    assert score_all("resume", []) == []
 
     print("job_search self-check OK")

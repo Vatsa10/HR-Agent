@@ -581,16 +581,30 @@ def _run_job_search(job_id: str, keywords: str, location: str, user_id: int):
         for j in jobs:
             j["seen"] = j.get("li_job_id") in seen_ids
         row, resume_text = _resume_text_for(user_id)
+        # Heuristic score first for an instant sort/paint baseline.
         if row and (row.get("parsed") or {}):
             jobs = job_search.heuristic_scores(row["parsed"], jobs)
-            jobs.sort(key=lambda j: j.get("heuristic_score", 0) or 0, reverse=True)
-            top = jobs[:6]
-            if resume_text and top:
-                for s in job_search.batch_llm_scores(resume_text, top):
-                    idx = s.get("index")
-                    if isinstance(idx, int) and 0 <= idx < len(top):
-                        top[idx]["llm_score"] = s.get("score")
-                        top[idx]["llm_reason"] = s.get("reason")
+        else:
+            for j in jobs:
+                j["heuristic_score"] = 0.0
+        jobs.sort(key=lambda j: j.get("heuristic_score", 0) or 0, reverse=True)
+        # Single displayed "score": defaults to the heuristic.
+        for j in jobs:
+            j["score"] = j.get("heuristic_score", 0.0)
+            j.setdefault("reason", "")
+        # Refine ALL jobs with parallel LLM scoring (chunked concurrently).
+        if resume_text and jobs:
+            for s in job_search.score_all(resume_text, jobs):
+                idx = s.get("index")
+                if not (isinstance(idx, int) and 0 <= idx < len(jobs)):
+                    continue
+                if s.get("score") is not None:
+                    jobs[idx]["llm_score"] = s.get("score")
+                    jobs[idx]["score"] = s.get("score")
+                if s.get("reason"):
+                    jobs[idx]["llm_reason"] = s.get("reason")
+                    jobs[idx]["reason"] = s.get("reason")
+        jobs.sort(key=lambda j: j.get("score", 0) or 0, reverse=True)
         job["result"] = {"jobs": jobs}
         job["status"] = "done"
     except Exception as e:
@@ -878,6 +892,26 @@ async def api_hr_nl_search(request: Request):
         daemon=True,
     ).start()
     return {"job_id": job_id}
+
+
+@app.post("/api/people/draft")
+async def api_people_draft(request: Request):
+    """Stateless cold-message draft for a found person. No DB writes."""
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    headline = (body.get("headline") or "").strip()
+    profile_url = (body.get("profile_url") or "").strip()
+    _row, resume_text = _resume_text_for(user["id"], body.get("resume_id"))
+    drafted = cold_message.draft_message(
+        resume_text,
+        {"company": headline or ""},
+        {"name": name, "headline": headline, "profile_url": profile_url},
+        body.get("tone") or "warm",
+    )
+    return {"subject": drafted.get("subject", ""), "body": drafted.get("body", "")}
 
 
 # ---------------- hr contacts ----------------
