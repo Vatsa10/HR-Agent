@@ -13,9 +13,7 @@ fastapi>=0.110.0
 uvicorn>=0.29.0
 python-multipart>=0.0.9
 psycopg[binary]>=3.1
-# LinkedIn access via vendored linkedin-mcp-server extractor
+# LinkedIn access via the maintained mcp-server-linkedin extractor (PyPI)
+mcp-server-linkedin>=4.17.0
 patchright>=1.40.0
-fastmcp>=3.0.0
-cryptography>=48.0.1
-inquirer>=3.4.0
 psycopg[binary]>=3.1

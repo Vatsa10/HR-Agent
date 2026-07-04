@@ -17,13 +17,10 @@ dedicated event-loop thread.
 import asyncio
 import json
 import os
-import sys
 
-_MCP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "linkedin-mcp-server")
-if _MCP_DIR not in sys.path:
-    sys.path.insert(0, _MCP_DIR)
-
-from linkedin_common import has_session, session_path  # noqa: E402
+# linkedin_mcp_server is installed from PyPI (mcp-server-linkedin), see
+# requirements.txt. Do not vendor its source into this repo.
+from linkedin_common import has_session, session_path
 
 
 def _require_session():
