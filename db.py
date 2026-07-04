@@ -236,6 +236,17 @@ def list_analyses(user_id):
     )
 
 
+def get_latest_analysis_for(user_id, resume_id, jd_id):
+    """Most recent analysis for this user/resume/jd combo, or None."""
+    return _one(
+        """SELECT id, user_id, resume_id, jd_id, result, created_at
+           FROM analyses
+           WHERE user_id = %s AND resume_id = %s AND jd_id IS NOT DISTINCT FROM %s
+           ORDER BY created_at DESC LIMIT 1""",
+        (user_id, resume_id, jd_id),
+    )
+
+
 def get_analysis(analysis_id, user_id):
     return _one(
         "SELECT id, user_id, resume_id, jd_id, result, created_at FROM analyses WHERE id = %s AND user_id = %s",

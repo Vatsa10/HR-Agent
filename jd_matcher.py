@@ -18,6 +18,27 @@ from prompt import DEFAULT_MODEL, MODEL_PARAMETERS
 logger = logging.getLogger(__name__)
 
 
+class RequirementCheck(BaseModel):
+    """One JD requirement checked against the resume."""
+
+    requirement: str
+    kind: str = Field(description="One of: must_have, nice_to_have")
+    status: str = Field(description="One of: met, partial, missing")
+    evidence: str = Field(
+        default="", description="Quote/paraphrase from resume; empty if missing"
+    )
+    suggestion: str = Field(
+        default="", description="How the candidate could close the gap; empty if met"
+    )
+
+
+class ATSKeywords(BaseModel):
+    """Keywords an ATS would scan for from the JD."""
+
+    present: list[str] = Field(default_factory=list)
+    absent: list[str] = Field(default_factory=list)
+
+
 class JDMatchResult(BaseModel):
     """Result of matching a resume against a job description."""
 
@@ -32,6 +53,14 @@ class JDMatchResult(BaseModel):
     experience_match: str = Field(description="How experience aligns with the JD")
     verdict: str = Field(description="One of: strong_fit, moderate_fit, weak_fit")
     summary: str = Field(description="2-3 sentence recruiter-facing summary")
+    requirements: list[RequirementCheck] = Field(
+        default_factory=list,
+        description="Per-requirement breakdown of JD coverage",
+    )
+    ats_keywords: ATSKeywords = Field(
+        default_factory=ATSKeywords,
+        description="ATS-scannable JD keywords present/absent in the resume",
+    )
 
 
 class _TextExtractor(HTMLParser):
@@ -102,8 +131,31 @@ Respond ONLY with valid JSON:
   "bonus_matched": ["matched nice-to-have/bonus item", ...],
   "experience_match": "<how the candidate's experience aligns>",
   "verdict": "<strong_fit | moderate_fit | weak_fit>",
-  "summary": "<2-3 sentence recruiter-facing summary>"
-}}"""
+  "summary": "<2-3 sentence recruiter-facing summary>",
+  "requirements": [
+    {{
+      "requirement": "<the JD requirement, concise>",
+      "kind": "<must_have | nice_to_have>",
+      "status": "<met | partial | missing>",
+      "evidence": "<short quote or paraphrase from the resume backing this up; empty string if missing>",
+      "suggestion": "<concrete way the candidate could close the gap; empty string if met>"
+    }}
+  ],
+  "ats_keywords": {{
+    "present": ["<JD keyword an ATS would scan for that appears in the resume>", ...],
+    "absent": ["<JD keyword an ATS would scan for that is NOT in the resume>", ...]
+  }}
+}}
+
+Requirements list rules:
+- Include EVERY distinct requirement from the JD, both must-have and nice-to-have, each classified with kind.
+- status is "met" only when resume evidence clearly covers it; "partial" when adjacent/incomplete evidence exists; "missing" when there is no evidence.
+- evidence must be a short quote or close paraphrase from the resume (empty string when status is "missing").
+- suggestion must be a practical way to close the gap (empty string when status is "met").
+
+ATS keyword rules:
+- ats_keywords are the concrete technologies, tools, certifications, and role terms an applicant tracking system would scan the JD for.
+- "present" means the exact or near-exact term appears in the resume; otherwise it goes in "absent"."""
 
 
 def match_resume_to_jd(

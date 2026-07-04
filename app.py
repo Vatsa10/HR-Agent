@@ -336,9 +336,26 @@ async def api_build(request: Request):
         except Exception:
             logger.exception("github fetch failed; building without github data")
 
-    built = build_resume(parsed, jd_text, github_data, user.get("extras") or None)
-    gen_id = db.save_generated(user["id"], resume_id, jd_id, built["content"], built["markdown"])
-    return {"id": gen_id, "content": built["content"], "markdown": built["markdown"]}
+    jd_match = None
+    try:
+        analysis = db.get_latest_analysis_for(user["id"], resume_id, jd_id)
+        if analysis and isinstance(analysis.get("result"), dict):
+            jd_match = analysis["result"].get("jd_match")
+    except Exception:
+        logger.exception("analysis lookup failed; building without jd match")
+
+    built = build_resume(parsed, jd_text, github_data, user.get("extras") or None, jd_match=jd_match)
+    content = built["content"]
+    tailoring_notes = built.get("tailoring_notes") or []
+    if tailoring_notes:
+        content["_tailoring_notes"] = tailoring_notes
+    gen_id = db.save_generated(user["id"], resume_id, jd_id, content, built["markdown"])
+    return {
+        "id": gen_id,
+        "content": content,
+        "markdown": built["markdown"],
+        "tailoring_notes": tailoring_notes,
+    }
 
 
 @app.get("/api/generated/{gen_id}")

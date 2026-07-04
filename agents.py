@@ -116,10 +116,13 @@ def jd_agent(state: PipelineState) -> PipelineState:
     """JDAgent — unique tool: URL fetch + JD/resume fit scoring."""
     logger.info("🤖 JDAgent: matching resume against job description")
     try:
+        if not state.get("jd_text") and state.get("jd_url"):
+            from jd_matcher import fetch_jd_from_url
+
+            state["jd_text"] = fetch_jd_from_url(state["jd_url"])
         state["jd_match"] = match_resume_to_jd(
             resume_text=state["resume_text"],
             jd_text=state.get("jd_text"),
-            jd_url=state.get("jd_url"),
         )
     except Exception as e:
         _append_error(state, f"JDAgent failed: {e}")

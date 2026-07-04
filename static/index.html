@@ -4,219 +4,17 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HR-Agent</title>
-<style>
-  :root {
-    --ink: oklch(24% 0.012 260);
-    --ink-soft: oklch(45% 0.014 260);
-    --ink-faint: oklch(62% 0.012 260);
-    --paper: oklch(98.4% 0.004 260);
-    --panel: oklch(96.2% 0.006 260);
-    --line: oklch(90% 0.008 260);
-    --accent: oklch(52% 0.15 258);
-    --accent-soft: oklch(94% 0.03 258);
-    --good: oklch(56% 0.13 150);
-    --warn: oklch(62% 0.14 70);
-    --bad: oklch(55% 0.16 25);
-    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  }
-  * { margin: 0; box-sizing: border-box; }
-  nav {
-    display: flex; align-items: center; gap: 20px;
-    padding: 14px 24px; border-bottom: 1px solid var(--line);
-  }
-  nav .brand { font-weight: 650; letter-spacing: -0.01em; margin-right: 8px; }
-  nav a {
-    color: var(--ink-soft); text-decoration: none; font-size: 14px; font-weight: 550;
-    padding: 4px 10px; border-radius: 6px;
-    transition: background 150ms var(--ease-out), color 150ms var(--ease-out);
-  }
-  nav a:hover { background: var(--panel); color: var(--ink); }
-  nav a.active { background: var(--accent-soft); color: var(--accent); }
-  nav .spacer { flex: 1; }
-  nav button {
-    border: 1px solid var(--line); background: transparent; font: inherit; font-size: 13px;
-    font-weight: 550; color: var(--ink-soft); padding: 5px 14px; border-radius: 7px; cursor: pointer;
-    transition: border-color 150ms var(--ease-out), color 150ms var(--ease-out);
-  }
-  nav button:hover { border-color: var(--accent); color: var(--accent); }
-  body {
-    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-    background: var(--paper);
-    color: var(--ink);
-    -webkit-font-smoothing: antialiased;
-  }
-  main { max-width: 720px; margin: 0 auto; padding: 56px 24px 96px; }
-
-  header { margin-bottom: 44px; }
-  header h1 { font-size: 21px; font-weight: 650; letter-spacing: -0.01em; }
-  header p { color: var(--ink-soft); margin-top: 6px; max-width: 58ch; }
-  .agents-note { margin-top: 14px; font-size: 13px; color: var(--ink-faint); }
-  .agents-note b { color: var(--ink-soft); font-weight: 550; }
-
-  /* --- Form --- */
-  .drop {
-    border: 1.5px dashed var(--line);
-    border-radius: 10px;
-    padding: 34px 24px;
-    text-align: center;
-    cursor: pointer;
-    transition: border-color 180ms var(--ease-out), background 180ms var(--ease-out);
-  }
-  .drop:hover, .drop.over { border-color: var(--accent); background: var(--accent-soft); }
-  .drop.has-file { border-style: solid; border-color: var(--accent); background: var(--accent-soft); }
-  .drop strong { font-weight: 600; }
-  .drop span { display: block; margin-top: 4px; font-size: 13px; color: var(--ink-faint); }
-  .drop .filename { color: var(--accent); font-weight: 600; }
-
-  fieldset { border: 0; padding: 0; margin: 28px 0 0; }
-  legend { font-size: 13px; font-weight: 600; color: var(--ink-soft); margin-bottom: 10px; padding: 0; }
-  .seg { display: inline-flex; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 3px; margin-bottom: 12px; }
-  .seg button {
-    border: 0; background: transparent; font: inherit; font-size: 13px; font-weight: 550;
-    color: var(--ink-soft); padding: 5px 14px; border-radius: 6px; cursor: pointer;
-    transition: background 150ms var(--ease-out), color 150ms var(--ease-out), transform 120ms var(--ease-out);
-  }
-  .seg button:active { transform: scale(0.97); }
-  .seg button[aria-pressed="true"] { background: var(--paper); color: var(--ink); box-shadow: 0 1px 2px oklch(0% 0 0 / 0.07); }
-  input[type=url], textarea {
-    width: 100%; font: inherit; color: var(--ink);
-    background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
-    padding: 10px 12px; transition: border-color 150ms var(--ease-out), box-shadow 150ms var(--ease-out);
-  }
-  input[type=url]:focus, textarea:focus {
-    outline: none; border-color: var(--accent);
-    box-shadow: 0 0 0 3px oklch(52% 0.15 258 / 0.15);
-  }
-  textarea { min-height: 110px; resize: vertical; }
-  .hint { font-size: 12.5px; color: var(--ink-faint); margin-top: 6px; }
-
-  .run {
-    margin-top: 28px; width: 100%;
-    background: var(--accent); color: oklch(99% 0.003 258);
-    border: 0; border-radius: 9px; font: inherit; font-size: 15px; font-weight: 600;
-    padding: 12px; cursor: pointer;
-    transition: transform 140ms var(--ease-out), opacity 150ms var(--ease-out), filter 150ms var(--ease-out);
-  }
-  .run:hover { filter: brightness(1.07); }
-  .run:active { transform: scale(0.985); }
-  .run:disabled { opacity: 0.45; cursor: not-allowed; }
-
-  /* --- Pipeline stepper --- */
-  #pipeline { margin-top: 40px; }
-  .step { display: flex; align-items: center; gap: 12px; padding: 10px 0; color: var(--ink-faint); }
-  .step .dot {
-    width: 22px; height: 22px; border-radius: 50%; flex: none;
-    border: 1.5px solid var(--line); display: grid; place-items: center;
-    font-size: 11px; transition: border-color 200ms var(--ease-out), background 200ms var(--ease-out);
-  }
-  .step.active { color: var(--ink); }
-  .step.active .dot { border-color: var(--accent); }
-  .step.active .dot::after {
-    content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent);
-    animation: pulse 1.1s var(--ease-out) infinite alternate;
-  }
-  @keyframes pulse { from { transform: scale(0.7); opacity: 0.5; } to { transform: scale(1); opacity: 1; } }
-  .step.done { color: var(--ink-soft); }
-  .step.done .dot { background: var(--accent); border-color: var(--accent); color: oklch(99% 0 0); }
-  .step.done .dot::before { content: "✓"; }
-  .step.skipped { text-decoration: line-through; }
-
-  /* --- Results --- */
-  #results > section {
-    opacity: 0; transform: translateY(8px);
-    animation: rise 320ms var(--ease-out) forwards;
-  }
-  #results > section:nth-child(2) { animation-delay: 60ms; }
-  #results > section:nth-child(3) { animation-delay: 120ms; }
-  #results > section:nth-child(4) { animation-delay: 180ms; }
-  @keyframes rise { to { opacity: 1; transform: none; } }
-
-  .scoreline { display: flex; align-items: baseline; gap: 14px; margin: 44px 0 6px; flex-wrap: wrap; }
-  .scoreline h2 { font-size: 19px; font-weight: 650; letter-spacing: -0.01em; }
-  .scoreline .total { font-size: 15px; color: var(--ink-soft); }
-  .scoreline .total b { font-size: 19px; color: var(--ink); font-weight: 650; }
-
-  .cat { padding: 16px 0; border-bottom: 1px solid var(--line); }
-  .cat-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-  .cat-head h3 { font-size: 14px; font-weight: 600; }
-  .cat-head .n { font-variant-numeric: tabular-nums; font-size: 13.5px; color: var(--ink-soft); }
-  .meter { height: 4px; background: var(--panel); border-radius: 2px; margin: 10px 0; overflow: hidden; }
-  .meter i {
-    display: block; height: 100%; background: var(--accent); border-radius: 2px;
-    transform-origin: left; transform: scaleX(0);
-    transition: transform 600ms var(--ease-out);
-  }
-  .evidence { font-size: 13.5px; color: var(--ink-soft); max-width: 68ch; }
-
-  .adjust { display: flex; gap: 28px; margin-top: 18px; font-size: 13.5px; flex-wrap: wrap; }
-  .adjust div { max-width: 40ch; }
-  .adjust dt { font-weight: 600; font-size: 13px; }
-  .adjust dd { margin: 3px 0 0; color: var(--ink-soft); }
-  .adjust .plus dt { color: var(--good); }
-  .adjust .minus dt { color: var(--bad); }
-
-  /* JD fit */
-  .fit { margin-top: 44px; padding: 20px 22px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
-  .fit-head { display: flex; align-items: center; gap: 12px; }
-  .fit-head h2 { font-size: 16px; font-weight: 650; flex: 1; }
-  .badge { font-size: 12px; font-weight: 650; letter-spacing: 0.02em; padding: 3px 10px; border-radius: 999px; }
-  .badge.strong_fit   { background: oklch(93% 0.05 150); color: var(--good); }
-  .badge.moderate_fit { background: oklch(94% 0.06 70);  color: var(--warn); }
-  .badge.weak_fit     { background: oklch(94% 0.05 25);  color: var(--bad); }
-  .fit .num { font-variant-numeric: tabular-nums; font-weight: 650; font-size: 17px; }
-  .fit p.sum { margin-top: 10px; color: var(--ink-soft); font-size: 14px; max-width: 65ch; }
-  .skills { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
-  .skills em { font-style: normal; font-size: 12.5px; padding: 3px 9px; border-radius: 6px; background: var(--paper); border: 1px solid var(--line); }
-  .skills.miss em { color: var(--bad); border-color: oklch(88% 0.05 25); }
-  .skills-label { font-size: 12.5px; font-weight: 600; color: var(--ink-soft); margin-top: 14px; }
-
-  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; margin-top: 44px; }
-  @media (max-width: 560px) { .twocol { grid-template-columns: 1fr; } }
-  .twocol h2 { font-size: 14px; font-weight: 650; margin-bottom: 10px; }
-  .twocol ol { padding-left: 20px; color: var(--ink-soft); font-size: 14px; }
-  .twocol li { margin-bottom: 6px; }
-
-  .error {
-    margin-top: 28px; padding: 14px 16px; border-radius: 9px;
-    background: oklch(95% 0.03 25); color: var(--bad); font-size: 14px;
-  }
-  .hidden { display: none; }
-
-  /* --- History --- */
-  #history { margin-top: 56px; }
-  #history h2 { font-size: 16px; font-weight: 650; margin-bottom: 12px; }
-  .hist-row {
-    display: flex; align-items: baseline; gap: 14px; width: 100%; text-align: left;
-    background: transparent; border: 0; border-bottom: 1px solid var(--line);
-    font: inherit; color: var(--ink); padding: 11px 4px; cursor: pointer;
-    transition: background 150ms var(--ease-out);
-  }
-  .hist-row:hover { background: var(--accent-soft); }
-  .hist-row .hname { font-weight: 600; flex: 1; }
-  .hist-row .hscore { font-variant-numeric: tabular-nums; color: var(--ink-soft); font-size: 13.5px; }
-  .hist-row .hdate { color: var(--ink-faint); font-size: 12.5px; white-space: nowrap; }
-  .hist-empty { color: var(--ink-faint); font-size: 13.5px; }
-
-  @media (prefers-reduced-motion: reduce) {
-    #results > section { animation-duration: 1ms; }
-    .meter i { transition-duration: 1ms; }
-    .step.active .dot::after { animation: none; }
-  }
-</style>
+<link rel="stylesheet" href="/static/css/app.css">
 </head>
 <body>
-<nav>
-  <span class="brand">HR-Agent</span>
-  <a href="/" class="active">Analyze</a>
-  <a href="/builder.html">Builder</a>
-  <span class="spacer"></span>
-  <button id="logout">Log out</button>
-</nav>
-<main>
-  <header>
-    <h1>HR-Agent</h1>
-    <p>Upload a resume and, optionally, a job posting. Four specialized agents parse, enrich, match and score the candidate with evidence for every number.</p>
-    <p class="agents-note"><b>Parser</b> · reads the PDF &nbsp;&nbsp;<b>GitHub Scout</b> · checks repositories &nbsp;&nbsp;<b>JD Analyst</b> · matches the posting &nbsp;&nbsp;<b>Evaluator</b> · scores with a rubric</p>
+<div id="nav"></div>
+<script src="/static/js/api.js"></script>
+<script src="/static/js/nav.js"></script>
+<main style="max-width:720px;margin:0 auto;padding:56px 24px 96px;">
+  <header style="margin-bottom:44px;">
+    <h1 style="font-size:21px;font-weight:650;letter-spacing:-0.01em;">HR-Agent</h1>
+    <p style="color:var(--ink-soft);margin-top:6px;max-width:58ch;">Upload a resume and, optionally, a job posting. Four specialized agents parse, enrich, match and score the candidate with evidence for every number.</p>
+    <p style="margin-top:14px;font-size:13px;color:var(--ink-faint);"><b style="color:var(--ink-soft);font-weight:550;">Parser</b> · reads the PDF &nbsp;&nbsp;<b style="color:var(--ink-soft);font-weight:550;">GitHub Scout</b> · checks repositories &nbsp;&nbsp;<b style="color:var(--ink-soft);font-weight:550;">JD Analyst</b> · matches the posting &nbsp;&nbsp;<b style="color:var(--ink-soft);font-weight:550;">Evaluator</b> · scores with a rubric</p>
   </header>
 
   <form id="form">
@@ -261,199 +59,220 @@
 </main>
 
 <script>
-const $ = id => document.getElementById(id);
+(function () {
+  "use strict";
+  const { api, authFetch, esc } = window.HR;
+  const $ = id => document.getElementById(id);
 
-async function authFetch(url, opts) {
-  const res = await fetch(url, opts);
-  if (res.status === 401) { location = "/login.html"; throw new Error("unauthorized"); }
-  return res;
-}
-$("logout").addEventListener("click", async () => {
-  await fetch("/api/logout", { method: "POST" });
-  location = "/login.html";
-});
+  const drop = $("drop"), fileInput = $("file"), runBtn = $("run");
+  let file = null;
 
-const drop = $("drop"), fileInput = $("file"), runBtn = $("run");
-let file = null;
+  drop.addEventListener("click", () => fileInput.click());
+  drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fileInput.click(); } });
+  ["dragover","dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", e => setFile(e.dataTransfer.files[0]));
+  fileInput.addEventListener("change", () => setFile(fileInput.files[0]));
 
-drop.addEventListener("click", () => fileInput.click());
-drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") fileInput.click(); });
-["dragover","dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
-["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
-drop.addEventListener("drop", e => setFile(e.dataTransfer.files[0]));
-fileInput.addEventListener("change", () => setFile(fileInput.files[0]));
-
-function setFile(f) {
-  if (!f || !f.name.toLowerCase().endsWith(".pdf")) return;
-  file = f;
-  drop.classList.add("has-file");
-  $("drop-title").innerHTML = '<span class="filename">' + f.name + '</span>';
-  $("drop-sub").textContent = "Click to choose a different file";
-  runBtn.disabled = false;
-}
-
-const tabs = { url: [$("tab-url"), $("pane-url")], text: [$("tab-text"), $("pane-text")] };
-for (const key of Object.keys(tabs)) {
-  tabs[key][0].addEventListener("click", () => {
-    for (const k of Object.keys(tabs)) {
-      tabs[k][0].setAttribute("aria-pressed", String(k === key));
-      tabs[k][1].classList.toggle("hidden", k !== key);
-    }
-  });
-}
-
-$("form").addEventListener("submit", async e => {
-  e.preventDefault();
-  if (!file) return;
-  runBtn.disabled = true;
-  $("error").classList.add("hidden");
-  $("results").innerHTML = "";
-
-  const useUrl = $("tab-url").getAttribute("aria-pressed") === "true";
-  const jdUrl = useUrl ? $("jd_url").value.trim() : "";
-  const jdText = useUrl ? "" : $("jd_text").value.trim();
-  const hasJd = !!(jdUrl || jdText);
-
-  const pipeline = $("pipeline");
-  pipeline.classList.remove("hidden");
-  pipeline.querySelectorAll(".step").forEach(s => {
-    s.className = "step" + (s.dataset.stage === "jd" && !hasJd ? " skipped" : "");
-  });
-
-  const fd = new FormData();
-  fd.append("resume", file);
-  fd.append("jd_url", jdUrl);
-  fd.append("jd_text", jdText);
-
-  try {
-    const res = await authFetch("/api/analyze", { method: "POST", body: fd });
-    const { job_id, error } = await res.json();
-    if (error) throw new Error(error);
-    await poll(job_id, hasJd);
-    loadHistory();
-  } catch (err) {
-    showError(err.message);
-  } finally {
+  function setFile(f) {
+    if (!f || !f.name.toLowerCase().endsWith(".pdf")) return;
+    file = f;
+    drop.classList.add("has-file");
+    $("drop-title").innerHTML = '<span class="filename">' + esc(f.name) + '</span>';
+    $("drop-sub").textContent = "Click to choose a different file";
     runBtn.disabled = false;
   }
-});
 
-const ORDER = ["parse", "github", "jd", "evaluate"];
-async function poll(jobId, hasJd) {
-  while (true) {
-    const res = await authFetch("/api/jobs/" + jobId);
-    const job = await res.json();
-    const idx = ORDER.indexOf(job.stage);
-    document.querySelectorAll(".step").forEach(s => {
-      const i = ORDER.indexOf(s.dataset.stage);
-      s.classList.toggle("done", job.status === "done" || i < idx);
-      s.classList.toggle("active", job.status === "running" && i === idx);
-      if (s.dataset.stage === "jd" && !hasJd) { s.classList.remove("active"); s.classList.add("skipped"); }
+  const tabs = { url: [$("tab-url"), $("pane-url")], text: [$("tab-text"), $("pane-text")] };
+  for (const key of Object.keys(tabs)) {
+    tabs[key][0].addEventListener("click", () => {
+      for (const k of Object.keys(tabs)) {
+        tabs[k][0].setAttribute("aria-pressed", String(k === key));
+        tabs[k][1].classList.toggle("hidden", k !== key);
+      }
     });
-    if (job.status === "done") return render(job.result);
-    if (job.status === "error") return showError(job.error);
-    await new Promise(r => setTimeout(r, 1200));
   }
-}
 
-function showError(msg) {
-  $("pipeline").classList.add("hidden");
-  const el = $("error");
-  el.textContent = "Analysis failed: " + msg;
-  el.classList.remove("hidden");
-}
+  $("form").addEventListener("submit", async e => {
+    e.preventDefault();
+    if (!file) return;
+    runBtn.disabled = true;
+    $("error").classList.add("hidden");
+    $("results").innerHTML = "";
 
-const CAT_LABELS = {
-  open_source: "Open source", self_projects: "Self projects",
-  production: "Production experience", technical_skills: "Technical skills",
-};
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+    const useUrl = $("tab-url").getAttribute("aria-pressed") === "true";
+    const jdUrl = useUrl ? $("jd_url").value.trim() : "";
+    const jdText = useUrl ? "" : $("jd_text").value.trim();
+    const hasJd = !!(jdUrl || jdText);
 
-function render(r) {
-  const out = [];
-  const ev = r.evaluation;
+    const pipeline = $("pipeline");
+    pipeline.classList.remove("hidden");
+    pipeline.querySelectorAll(".step").forEach(s => {
+      s.className = "step" + (s.dataset.stage === "jd" && !hasJd ? " skipped" : "");
+    });
 
-  if (ev) {
-    let cats = "";
-    for (const [key, c] of Object.entries(ev.scores)) {
-      const pct = Math.min(c.score, c.max) / c.max * 100;
-      cats += `<div class="cat">
-        <div class="cat-head"><h3>${CAT_LABELS[key] || key}</h3>
-        <span class="n">${Math.min(c.score, c.max)} / ${c.max}</span></div>
-        <div class="meter"><i data-pct="${pct}"></i></div>
-        <p class="evidence">${esc(c.evidence)}</p></div>`;
+    const fd = new FormData();
+    fd.append("resume", file);
+    fd.append("jd_url", jdUrl);
+    fd.append("jd_text", jdText);
+
+    try {
+      const res = await authFetch("/api/analyze", { method: "POST", body: fd });
+      const { job_id, error } = await res.json();
+      if (error) throw new Error(error);
+      await poll(job_id, hasJd);
+      loadHistory();
+    } catch (err) {
+      if (err.message !== "unauthorized") showError(err.message);
+    } finally {
+      runBtn.disabled = false;
     }
-    out.push(`<section>
-      <div class="scoreline"><h2>${esc(r.candidate)}</h2>
-      <span class="total"><b>${r.total_score}</b> / ${r.max_score}</span></div>
-      ${cats}
-      <dl class="adjust">
-        <div class="plus"><dt>Bonus +${ev.bonus_points.total}</dt><dd>${esc(ev.bonus_points.breakdown)}</dd></div>
-        ${ev.deductions.total > 0 ? `<div class="minus"><dt>Deductions −${ev.deductions.total}</dt><dd>${esc(ev.deductions.reasons)}</dd></div>` : ""}
-      </dl>
-    </section>`);
-  }
+  });
 
-  const m = r.jd_match;
-  if (m) {
-    out.push(`<section><div class="fit">
-      <div class="fit-head"><h2>Job description fit</h2>
-        <span class="num">${m.fit_score}<small>/100</small></span>
-        <span class="badge ${m.verdict}">${m.verdict.replace("_", " ")}</span></div>
-      <p class="sum">${esc(m.summary)}</p>
-      <p class="sum">${esc(m.experience_match)}</p>
-      ${m.matching_skills.length ? `<p class="skills-label">Matching skills</p><div class="skills">${m.matching_skills.map(s => `<em>${esc(s)}</em>`).join("")}</div>` : ""}
-      ${(m.bonus_matched || []).length ? `<p class="skills-label">Bonus (nice-to-have) matched</p><div class="skills">${m.bonus_matched.map(s => `<em>${esc(s)}</em>`).join("")}</div>` : ""}
-      ${m.missing_skills.length ? `<p class="skills-label">Missing skills</p><div class="skills miss">${m.missing_skills.map(s => `<em>${esc(s)}</em>`).join("")}</div>` : ""}
-    </div></section>`);
-  }
-
-  if (ev) {
-    out.push(`<section><div class="twocol">
-      <div><h2>Key strengths</h2><ol>${ev.key_strengths.map(s => `<li>${esc(s)}</li>`).join("")}</ol></div>
-      <div><h2>Areas for improvement</h2><ol>${ev.areas_for_improvement.map(s => `<li>${esc(s)}</li>`).join("")}</ol></div>
-    </div></section>`);
-  }
-
-  if (r.errors && r.errors.length) {
-    out.push(`<section><p class="hint">Notes: ${r.errors.map(esc).join(" · ")}</p></section>`);
-  }
-
-  $("results").innerHTML = out.join("");
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    document.querySelectorAll(".meter i").forEach(i => { i.style.transform = `scaleX(${i.dataset.pct / 100})`; });
-  }));
-}
-
-/* --- History --- */
-async function loadHistory() {
-  try {
-    const res = await authFetch("/api/history");
-    const items = await res.json();
-    const list = $("history-list");
-    if (!items.length) {
-      list.innerHTML = '<p class="hist-empty">No analyses yet. Run one above and it will show up here.</p>';
-      return;
+  const ORDER = ["parse", "github", "jd", "evaluate"];
+  async function poll(jobId, hasJd) {
+    while (true) {
+      const res = await authFetch("/api/jobs/" + jobId);
+      const job = await res.json();
+      const idx = ORDER.indexOf(job.stage);
+      document.querySelectorAll(".step").forEach(s => {
+        const i = ORDER.indexOf(s.dataset.stage);
+        s.classList.toggle("done", job.status === "done" || i < idx);
+        s.classList.toggle("active", job.status === "running" && i === idx);
+        if (s.dataset.stage === "jd" && !hasJd) { s.classList.remove("active"); s.classList.add("skipped"); }
+      });
+      if (job.status === "done") return render(job.result);
+      if (job.status === "error") return showError(job.error);
+      await new Promise(r => setTimeout(r, 1200));
     }
-    list.innerHTML = items.map(a => `
-      <button class="hist-row" data-id="${a.id}">
-        <span class="hname">${esc(a.candidate || "Unknown candidate")}</span>
-        <span class="hscore">${a.total_score != null ? a.total_score : "–"}</span>
-        <span class="hdate">${a.created_at ? new Date(a.created_at).toLocaleDateString() : ""}</span>
-      </button>`).join("");
-    list.querySelectorAll(".hist-row").forEach(btn => btn.addEventListener("click", async () => {
-      try {
-        const res = await authFetch("/api/analyses/" + btn.dataset.id);
-        const data = await res.json();
-        $("pipeline").classList.add("hidden");
-        $("error").classList.add("hidden");
-        render(data.result || data);
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      } catch (e) { if (e.message !== "unauthorized") showError(e.message); }
+  }
+
+  function showError(msg) {
+    $("pipeline").classList.add("hidden");
+    const el = $("error");
+    el.textContent = "Analysis failed: " + msg;
+    el.classList.remove("hidden");
+  }
+
+  const CAT_LABELS = {
+    open_source: "Open source", self_projects: "Self projects",
+    production: "Production experience", technical_skills: "Technical skills",
+  };
+  const REQ_MARK = { met: "✓", partial: "◑", missing: "✕" };
+
+  function requirementsHtml(m) {
+    const reqs = m.requirements || [];
+    if (!reqs.length) return "";
+    const rows = reqs.map(r => {
+      const status = ["met", "partial", "missing"].includes(r.status) ? r.status : "partial";
+      return `<div class="req ${status}">
+        <span class="mark" aria-label="${status}">${REQ_MARK[status]}</span>
+        <div class="req-body">
+          <div class="req-text">${esc(r.requirement)}<span class="req-kind">${r.kind === "must_have" ? "must have" : "nice to have"}</span></div>
+          ${r.evidence ? `<div class="req-evidence">${esc(r.evidence)}</div>` : ""}
+          ${r.suggestion ? `<div class="req-suggestion">${esc(r.suggestion)}</div>` : ""}
+        </div>
+      </div>`;
+    }).join("");
+    return `<p class="skills-label">Requirement breakdown</p><div class="reqs">${rows}</div>`;
+  }
+
+  function atsHtml(m) {
+    const k = m.ats_keywords || {};
+    const present = k.present || [], absent = k.absent || [];
+    if (!present.length && !absent.length) return "";
+    let out = `<p class="skills-label">ATS keywords</p>`;
+    if (present.length) out += `<div class="ats-chips present">${present.map(s => `<em>${esc(s)}</em>`).join("")}</div>`;
+    if (absent.length) out += `<p class="hint" style="margin-top:10px;">Not found in the resume:</p><div class="ats-chips absent">${absent.map(s => `<em>${esc(s)}</em>`).join("")}</div>`;
+    return out;
+  }
+
+  function render(r) {
+    const out = [];
+    const ev = r.evaluation;
+
+    if (ev) {
+      let cats = "";
+      for (const [key, c] of Object.entries(ev.scores)) {
+        const pct = Math.min(c.score, c.max) / c.max * 100;
+        cats += `<div class="cat">
+          <div class="cat-head"><h3>${CAT_LABELS[key] || key}</h3>
+          <span class="n">${Math.min(c.score, c.max)} / ${c.max}</span></div>
+          <div class="meter"><i data-pct="${pct}"></i></div>
+          <p class="evidence">${esc(c.evidence)}</p></div>`;
+      }
+      out.push(`<section>
+        <div class="scoreline"><h2>${esc(r.candidate)}</h2>
+        <span class="total"><b>${r.total_score}</b> / ${r.max_score}</span></div>
+        ${cats}
+        <dl class="adjust">
+          <div class="plus"><dt>Bonus +${ev.bonus_points.total}</dt><dd>${esc(ev.bonus_points.breakdown)}</dd></div>
+          ${ev.deductions.total > 0 ? `<div class="minus"><dt>Deductions −${ev.deductions.total}</dt><dd>${esc(ev.deductions.reasons)}</dd></div>` : ""}
+        </dl>
+      </section>`);
+    }
+
+    const m = r.jd_match;
+    if (m) {
+      out.push(`<section><div class="fit">
+        <div class="fit-head"><h2>Job description fit</h2>
+          <span class="num">${m.fit_score}<small>/100</small></span>
+          <span class="badge ${m.verdict}">${m.verdict.replace("_", " ")}</span></div>
+        <p class="sum">${esc(m.summary)}</p>
+        <p class="sum">${esc(m.experience_match)}</p>
+        ${requirementsHtml(m)}
+        ${m.matching_skills.length ? `<p class="skills-label">Matching skills</p><div class="skills">${m.matching_skills.map(s => `<em>${esc(s)}</em>`).join("")}</div>` : ""}
+        ${(m.bonus_matched || []).length ? `<p class="skills-label">Bonus (nice-to-have) matched</p><div class="skills">${m.bonus_matched.map(s => `<em>${esc(s)}</em>`).join("")}</div>` : ""}
+        ${m.missing_skills.length ? `<p class="skills-label">Missing skills</p><div class="skills miss">${m.missing_skills.map(s => `<em>${esc(s)}</em>`).join("")}</div>` : ""}
+        ${atsHtml(m)}
+      </div></section>`);
+    }
+
+    if (ev) {
+      out.push(`<section><div class="twocol">
+        <div><h2>Key strengths</h2><ol>${ev.key_strengths.map(s => `<li>${esc(s)}</li>`).join("")}</ol></div>
+        <div><h2>Areas for improvement</h2><ol>${ev.areas_for_improvement.map(s => `<li>${esc(s)}</li>`).join("")}</ol></div>
+      </div></section>`);
+    }
+
+    if (r.errors && r.errors.length) {
+      out.push(`<section><p class="hint">Notes: ${r.errors.map(esc).join(" · ")}</p></section>`);
+    }
+
+    $("results").innerHTML = out.join("");
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      document.querySelectorAll(".meter i").forEach(i => { i.style.transform = `scaleX(${i.dataset.pct / 100})`; });
     }));
-  } catch (e) { /* 401 already redirected */ }
-}
-loadHistory();
+  }
+
+  /* --- History --- */
+  async function loadHistory() {
+    try {
+      const items = await api("/api/history");
+      const list = $("history-list");
+      if (!items.length) {
+        list.innerHTML = '<p class="hist-empty">No analyses yet. Run one above and it will show up here.</p>';
+        return;
+      }
+      list.innerHTML = items.map(a => `
+        <button class="hist-row" data-id="${a.id}">
+          <span class="hname">${esc(a.candidate || "Unknown candidate")}</span>
+          <span class="hscore">${a.total_score != null ? a.total_score : "–"}</span>
+          <span class="hdate">${a.created_at ? new Date(a.created_at).toLocaleDateString() : ""}</span>
+        </button>`).join("");
+      list.querySelectorAll(".hist-row").forEach(btn => btn.addEventListener("click", async () => {
+        try {
+          const data = await api("/api/analyses/" + btn.dataset.id);
+          $("pipeline").classList.add("hidden");
+          $("error").classList.add("hidden");
+          render(data.result || data);
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        } catch (e) { if (e.message !== "unauthorized") showError(e.message); }
+      }));
+    } catch (e) { /* 401 already redirected */ }
+  }
+  loadHistory();
+})();
 </script>
 </body>
 </html>
