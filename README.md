@@ -15,6 +15,8 @@
 - **Three LLM backends** — OpenAI (`gpt-4o-mini` default), Google Gemini, or local Ollama.
 - **Web UI** — upload resume, optional JD, watch agents work live, read evidence-backed scores.
 - **Explainable output** — every category score ships with its evidence.
+- **Accounts and history** — email/password auth (scrypt-hashed, cookie sessions), every analysis, resume, and JD saved to Postgres per user.
+- **Resume Builder** — pick a saved resume and JD, one LLM pass rewrites it impact-first (JD must-haves front-loaded, GitHub projects folded in), then edit inline, save, download Markdown, or print to PDF.
 
 ## Quick start
 
@@ -28,6 +30,16 @@ pip install -r requirements.txt
 
 cp .env.example .env   # set OPENAI_API_KEY (or Gemini/Ollama config)
 ```
+
+### Database (required for auth, history, builder)
+
+Set `DATABASE_URL` in `.env` to a Postgres connection string. A free [Neon](https://neon.tech) database works:
+
+```
+DATABASE_URL=postgresql://user:password@ep-xxx.region.aws.neon.tech/neondb?sslmode=require
+```
+
+Tables are created automatically on server startup. Register at `/login.html`, then Analyze (history saved per account) and build tailored resumes at `/builder.html`.
 
 ### Web UI
 

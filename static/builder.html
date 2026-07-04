@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HR-Agent · Builder</title>
+<style>
+  :root {
+    --ink: oklch(24% 0.012 260);
+    --ink-soft: oklch(45% 0.014 260);
+    --ink-faint: oklch(62% 0.012 260);
+    --paper: oklch(98.4% 0.004 260);
+    --panel: oklch(96.2% 0.006 260);
+    --line: oklch(90% 0.008 260);
+    --accent: oklch(52% 0.15 258);
+    --accent-soft: oklch(94% 0.03 258);
+    --good: oklch(56% 0.13 150);
+    --bad: oklch(55% 0.16 25);
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  }
+  * { margin: 0; box-sizing: border-box; }
+  body {
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--paper);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+  }
+  nav {
+    display: flex; align-items: center; gap: 20px;
+    padding: 14px 24px; border-bottom: 1px solid var(--line);
+  }
+  nav .brand { font-weight: 650; letter-spacing: -0.01em; margin-right: 8px; }
+  nav a {
+    color: var(--ink-soft); text-decoration: none; font-size: 14px; font-weight: 550;
+    padding: 4px 10px; border-radius: 6px;
+    transition: background 150ms var(--ease-out), color 150ms var(--ease-out);
+  }
+  nav a:hover { background: var(--panel); color: var(--ink); }
+  nav a.active { background: var(--accent-soft); color: var(--accent); }
+  nav .spacer { flex: 1; }
+  nav button {
+    border: 1px solid var(--line); background: transparent; font: inherit; font-size: 13px;
+    font-weight: 550; color: var(--ink-soft); padding: 5px 14px; border-radius: 7px; cursor: pointer;
+    transition: border-color 150ms var(--ease-out), color 150ms var(--ease-out);
+  }
+  nav button:hover { border-color: var(--accent); color: var(--accent); }
+
+  .layout { display: grid; grid-template-columns: 300px 1fr; gap: 28px; max-width: 1200px; margin: 0 auto; padding: 28px 24px 96px; }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+
+  .box { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin-bottom: 18px; }
+  .box h2 { font-size: 14px; font-weight: 650; margin-bottom: 12px; }
+  label { display: block; font-size: 13px; font-weight: 600; color: var(--ink-soft); margin: 12px 0 6px; }
+  label:first-of-type { margin-top: 0; }
+  select, input[type=text], input[type=url] {
+    width: 100%; font: inherit; font-size: 14px; color: var(--ink);
+    background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
+    padding: 8px 10px; transition: border-color 150ms var(--ease-out), box-shadow 150ms var(--ease-out);
+  }
+  select:focus, input:focus {
+    outline: none; border-color: var(--accent);
+    box-shadow: 0 0 0 3px oklch(52% 0.15 258 / 0.15);
+  }
+  .run {
+    margin-top: 16px; width: 100%;
+    background: var(--accent); color: oklch(99% 0.003 258);
+    border: 0; border-radius: 9px; font: inherit; font-size: 15px; font-weight: 600;
+    padding: 11px; cursor: pointer;
+    transition: transform 140ms var(--ease-out), opacity 150ms var(--ease-out), filter 150ms var(--ease-out);
+  }
+  .run:hover { filter: brightness(1.07); }
+  .run:active { transform: scale(0.985); }
+  .run:disabled { opacity: 0.45; cursor: not-allowed; }
+  .ghost {
+    background: transparent; border: 1px solid var(--line); color: var(--ink-soft);
+    font: inherit; font-size: 13px; font-weight: 550; padding: 6px 12px; border-radius: 7px; cursor: pointer;
+    transition: border-color 150ms var(--ease-out), color 150ms var(--ease-out);
+  }
+  .ghost:hover { border-color: var(--accent); color: var(--accent); }
+  .extra-row { display: flex; gap: 6px; margin-bottom: 6px; }
+  .extra-row input { flex: 1; }
+  .extra-row .del { border: 0; background: transparent; color: var(--ink-faint); cursor: pointer; font-size: 15px; padding: 0 4px; }
+  .extra-row .del:hover { color: var(--bad); }
+  .hint { font-size: 12.5px; color: var(--ink-faint); margin-top: 6px; }
+  .saved-flash { font-size: 12.5px; color: var(--good); margin-top: 8px; }
+  .error {
+    margin-top: 14px; padding: 12px 14px; border-radius: 9px;
+    background: oklch(95% 0.03 25); color: var(--bad); font-size: 14px;
+  }
+  .hidden { display: none; }
+
+  /* --- Resume sheet --- */
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .sheet {
+    background: white; border: 1px solid var(--line); border-radius: 4px;
+    box-shadow: 0 2px 12px oklch(0% 0 0 / 0.06);
+    max-width: 800px; padding: 48px 56px; min-height: 400px;
+  }
+  .sheet .empty { color: var(--ink-faint); text-align: center; padding: 80px 0; }
+  .sheet [contenteditable] { outline: none; border-radius: 3px; transition: background 120ms var(--ease-out); }
+  .sheet [contenteditable]:hover { background: var(--accent-soft); }
+  .sheet [contenteditable]:focus { background: var(--accent-soft); box-shadow: 0 0 0 2px oklch(52% 0.15 258 / 0.3); }
+  .sheet h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.015em; }
+  .sheet .r-label { font-size: 15px; color: var(--ink-soft); margin-top: 2px; }
+  .sheet .r-contact { font-size: 12.5px; color: var(--ink-faint); margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .sheet .r-summary { margin-top: 14px; font-size: 13.5px; color: var(--ink-soft); }
+  .sheet h2.r-sec {
+    font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--ink); border-bottom: 1px solid var(--line);
+    margin: 22px 0 10px; padding-bottom: 4px;
+  }
+  .sheet .r-item { margin-bottom: 12px; }
+  .sheet .r-item-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+  .sheet .r-item-head b { font-size: 14px; font-weight: 650; }
+  .sheet .r-item-head .r-dates { font-size: 12px; color: var(--ink-faint); white-space: nowrap; }
+  .sheet .r-sub { font-size: 13px; color: var(--ink-soft); }
+  .sheet ul { margin: 6px 0 0; padding-left: 18px; }
+  .sheet li { font-size: 13px; margin-bottom: 3px; }
+  .sheet .r-skills { font-size: 13px; }
+  .sheet .r-skills b { font-weight: 650; }
+  .sheet .r-custom-body { font-size: 13px; white-space: pre-wrap; }
+  .sec-x { float: right; border: 0; background: none; color: var(--ink-faint); cursor: pointer; font-size: 13px; }
+  .sec-x:hover { color: var(--bad); }
+
+  @media print {
+    nav, .side, .toolbar, .error, .sec-x { display: none !important; }
+    body { background: white; }
+    .layout { display: block; padding: 0; max-width: none; }
+    .sheet { border: 0; box-shadow: none; border-radius: 0; max-width: none; padding: 0; }
+    .sheet [contenteditable]:hover, .sheet [contenteditable]:focus { background: transparent; box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+<nav>
+  <span class="brand">HR-Agent</span>
+  <a href="/">Analyze</a>
+  <a href="/builder.html" class="active">Builder</a>
+  <span class="spacer"></span>
+  <button id="logout">Log out</button>
+</nav>
+
+<div class="layout">
+  <aside class="side">
+    <div class="box">
+      <h2>Generate</h2>
+      <label for="resume-sel">Resume</label>
+      <select id="resume-sel"></select>
+      <label for="jd-sel">Job description</label>
+      <select id="jd-sel"><option value="">None (general polish)</option></select>
+      <button class="run" id="generate">Generate resume</button>
+      <p class="hint">The builder rewrites your parsed resume with impact-first bullets, tuned to the JD if one is selected.</p>
+    </div>
+
+    <div class="box">
+      <h2>Profile</h2>
+      <label for="github">GitHub URL</label>
+      <input type="url" id="github" placeholder="https://github.com/you">
+      <label>Extra details</label>
+      <div id="extras"></div>
+      <button class="ghost" id="add-extra" type="button">Add field</button>
+      <button class="run" id="save-profile">Save profile</button>
+      <p class="saved-flash hidden" id="profile-saved">Profile saved.</p>
+    </div>
+
+    <div id="error" class="error hidden"></div>
+  </aside>
+
+  <section>
+    <div class="toolbar hidden" id="toolbar">
+      <button class="ghost" id="add-section">Add custom section</button>
+      <button class="ghost" id="save-resume">Save</button>
+      <button class="ghost" id="download-md">Download Markdown</button>
+      <button class="ghost" id="print">Print / Save as PDF</button>
+    </div>
+    <div class="sheet" id="sheet">
+      <p class="empty">Pick a resume on the left and hit Generate to build a polished version here. Click any text to edit it.</p>
+    </div>
+  </section>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+
+let content = null;   // current generated JSON resume
+let genId = null;     // generated_resumes row id
+let markdown = "";
+
+async function api(url, opts) {
+  const res = await fetch(url, opts);
+  if (res.status === 401) { location = "/login.html"; throw new Error("unauthorized"); }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || data.error || "Request failed");
+  return data;
+}
+function showError(msg) {
+  const el = $("error");
+  el.textContent = msg;
+  el.classList.remove("hidden");
+  setTimeout(() => el.classList.add("hidden"), 6000);
+}
+
+$("logout").addEventListener("click", async () => {
+  await fetch("/api/logout", { method: "POST" });
+  location = "/login.html";
+});
+
+/* ---------- Left column ---------- */
+async function loadLists() {
+  const [resumes, jds] = await Promise.all([api("/api/resumes"), api("/api/jds")]);
+  $("resume-sel").innerHTML = resumes.length
+    ? resumes.map(r => `<option value="${r.id}">${esc(r.filename)}</option>`).join("")
+    : '<option value="">No resumes yet, run an analysis first</option>';
+  $("jd-sel").innerHTML = '<option value="">None (general polish)</option>' +
+    jds.map(j => `<option value="${j.id}">${esc(j.source_url || j.snippet || ("JD #" + j.id))}</option>`).join("");
+}
+
+function extraRow(k = "", v = "") {
+  const div = document.createElement("div");
+  div.className = "extra-row";
+  div.innerHTML = `<input type="text" class="ek" placeholder="Field (e.g. Certifications)" value="${esc(k)}">
+    <input type="text" class="ev" placeholder="Value" value="${esc(v)}">
+    <button type="button" class="del" title="Remove">&times;</button>`;
+  div.querySelector(".del").addEventListener("click", () => div.remove());
+  $("extras").appendChild(div);
+}
+$("add-extra").addEventListener("click", () => extraRow());
+
+async function loadProfile() {
+  const me = await api("/api/me");
+  $("github").value = me.github_url || "";
+  $("extras").innerHTML = "";
+  for (const [k, v] of Object.entries(me.extras || {})) extraRow(k, v);
+}
+
+$("save-profile").addEventListener("click", async () => {
+  const extras = {};
+  document.querySelectorAll(".extra-row").forEach(row => {
+    const k = row.querySelector(".ek").value.trim();
+    const v = row.querySelector(".ev").value.trim();
+    if (k) extras[k] = v;
+  });
+  try {
+    await api("/api/me", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ github_url: $("github").value.trim(), extras }),
+    });
+    $("profile-saved").classList.remove("hidden");
+    setTimeout(() => $("profile-saved").classList.add("hidden"), 2500);
+  } catch (e) { showError(e.message); }
+});
+
+$("generate").addEventListener("click", async () => {
+  const resumeId = $("resume-sel").value;
+  if (!resumeId) return showError("No resume selected.");
+  const btn = $("generate");
+  btn.disabled = true;
+  btn.textContent = "Generating...";
+  try {
+    const data = await api("/api/build", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ resume_id: Number(resumeId), jd_id: $("jd-sel").value ? Number($("jd-sel").value) : null }),
+    });
+    genId = data.id;
+    content = data.content;
+    markdown = data.markdown;
+    renderSheet();
+    $("toolbar").classList.remove("hidden");
+  } catch (e) { showError(e.message); }
+  finally { btn.disabled = false; btn.textContent = "Generate resume"; }
+});
+
+/* ---------- Preview rendering with data-path ---------- */
+const ed = (path, val, tag = "span", cls = "") =>
+  `<${tag}${cls ? ` class="${cls}"` : ""} contenteditable="true" data-path="${esc(path)}">${esc(val)}</${tag}>`;
+
+function renderSheet() {
+  const c = content, out = [];
+  const b = c.basics || {};
+  out.push(`<header>`);
+  out.push(ed("basics.name", b.name || "Your Name", "h1"));
+  if (b.label != null) out.push(ed("basics.label", b.label, "div", "r-label"));
+  const contact = [];
+  if (b.email != null) contact.push(ed("basics.email", b.email));
+  if (b.phone != null) contact.push(ed("basics.phone", b.phone));
+  if (b.url != null) contact.push(ed("basics.url", b.url));
+  if ((b.location || {}).city != null) contact.push(ed("basics.location.city", b.location.city));
+  if (contact.length) out.push(`<div class="r-contact">${contact.join('<span>·</span>')}</div>`);
+  if (b.summary != null) out.push(ed("basics.summary", b.summary, "p", "r-summary"));
+  out.push(`</header>`);
+
+  const itemHead = (base, titleKey, title, subKey, sub, start, end) => {
+    let h = `<div class="r-item-head"><span><b>${ed(base + "." + titleKey, title, "span")}</b>`;
+    if (sub != null) h += ` <span class="r-sub">${ed(base + "." + subKey, sub)}</span>`;
+    h += `</span>`;
+    if (start != null || end != null) {
+      h += `<span class="r-dates">${start != null ? ed(base + ".startDate", start) : ""}${start != null || end != null ? " – " : ""}${end != null ? ed(base + ".endDate", end) : '<span>Present</span>'}</span>`;
+    }
+    return h + `</div>`;
+  };
+  const highlights = (base, arr) => arr && arr.length
+    ? `<ul>${arr.map((h, i) => ed(base + ".highlights." + i, h, "li")).join("")}</ul>` : "";
+
+  if ((c.work || []).length) {
+    out.push(`<h2 class="r-sec">Experience</h2>`);
+    c.work.forEach((w, i) => {
+      const base = "work." + i;
+      out.push(`<div class="r-item">`);
+      out.push(itemHead(base, "position", w.position || "", "name", w.name ?? w.company, w.startDate, w.endDate));
+      if (w.summary != null) out.push(ed(base + ".summary", w.summary, "div", "r-sub"));
+      out.push(highlights(base, w.highlights));
+      out.push(`</div>`);
+    });
+  }
+
+  if ((c.projects || []).length) {
+    out.push(`<h2 class="r-sec">Projects</h2>`);
+    c.projects.forEach((p, i) => {
+      const base = "projects." + i;
+      out.push(`<div class="r-item">`);
+      out.push(itemHead(base, "name", p.name || "", "url", p.url, null, null));
+      if (p.description != null) out.push(ed(base + ".description", p.description, "div", "r-sub"));
+      out.push(highlights(base, p.highlights));
+      out.push(`</div>`);
+    });
+  }
+
+  if ((c.skills || []).length) {
+    out.push(`<h2 class="r-sec">Skills</h2>`);
+    c.skills.forEach((s, i) => {
+      const base = "skills." + i;
+      out.push(`<div class="r-skills"><b>${ed(base + ".name", s.name || "")}</b>${(s.keywords || []).length ? ": " + s.keywords.map((k, j) => ed(base + ".keywords." + j, k)).join(", ") : ""}</div>`);
+    });
+  }
+
+  if ((c.education || []).length) {
+    out.push(`<h2 class="r-sec">Education</h2>`);
+    c.education.forEach((e, i) => {
+      const base = "education." + i;
+      out.push(`<div class="r-item">`);
+      const degree = [e.studyType, e.area].filter(Boolean).join(", ");
+      out.push(itemHead(base, "institution", e.institution || "", "studyType", degree || e.studyType, e.startDate, e.endDate));
+      out.push(`</div>`);
+    });
+  }
+
+  (c.custom_sections || []).forEach((s, i) => {
+    const base = "custom_sections." + i;
+    out.push(`<h2 class="r-sec"><button class="sec-x" data-del="${i}" title="Remove section">&times;</button>${ed(base + ".title", s.title || "Custom section", "span")}</h2>`);
+    out.push(ed(base + ".body", s.body || "", "div", "r-custom-body"));
+  });
+
+  $("sheet").innerHTML = out.join("");
+  $("sheet").querySelectorAll(".sec-x").forEach(btn => btn.addEventListener("click", () => {
+    syncFromDom();
+    content.custom_sections.splice(Number(btn.dataset.del), 1);
+    renderSheet();
+  }));
+}
+
+/* ---------- Reconstruct content from DOM ---------- */
+function setPath(obj, path, value) {
+  const parts = path.split(".");
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = /^\d+$/.test(parts[i]) ? Number(parts[i]) : parts[i];
+    if (cur[key] == null) cur[key] = /^\d+$/.test(parts[i + 1]) ? [] : {};
+    cur = cur[key];
+  }
+  const last = parts[parts.length - 1];
+  cur[/^\d+$/.test(last) ? Number(last) : last] = value;
+}
+function syncFromDom() {
+  const clone = JSON.parse(JSON.stringify(content));
+  $("sheet").querySelectorAll("[data-path]").forEach(el => setPath(clone, el.dataset.path, el.textContent));
+  content = clone;
+}
+
+$("add-section").addEventListener("click", () => {
+  syncFromDom();
+  (content.custom_sections = content.custom_sections || []).push({ title: "New section", body: "Click to edit this text." });
+  renderSheet();
+});
+
+$("save-resume").addEventListener("click", async () => {
+  if (!genId) return;
+  syncFromDom();
+  const btn = $("save-resume");
+  btn.disabled = true;
+  try {
+    const data = await api("/api/generated/" + genId, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    if (data.markdown) markdown = data.markdown;
+    btn.textContent = "Saved";
+    setTimeout(() => { btn.textContent = "Save"; }, 2000);
+  } catch (e) { showError(e.message); }
+  finally { btn.disabled = false; }
+});
+
+$("download-md").addEventListener("click", () => {
+  const blob = new Blob([markdown || ""], { type: "text/markdown" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "resume.md";
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+$("print").addEventListener("click", () => window.print());
+
+/* ---------- Init ---------- */
+(async () => {
+  try {
+    await Promise.all([loadLists(), loadProfile()]);
+  } catch (e) { /* 401 already redirected */ }
+})();
+</script>
+</body>
+</html>

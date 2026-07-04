@@ -20,6 +20,25 @@
     --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   }
   * { margin: 0; box-sizing: border-box; }
+  nav {
+    display: flex; align-items: center; gap: 20px;
+    padding: 14px 24px; border-bottom: 1px solid var(--line);
+  }
+  nav .brand { font-weight: 650; letter-spacing: -0.01em; margin-right: 8px; }
+  nav a {
+    color: var(--ink-soft); text-decoration: none; font-size: 14px; font-weight: 550;
+    padding: 4px 10px; border-radius: 6px;
+    transition: background 150ms var(--ease-out), color 150ms var(--ease-out);
+  }
+  nav a:hover { background: var(--panel); color: var(--ink); }
+  nav a.active { background: var(--accent-soft); color: var(--accent); }
+  nav .spacer { flex: 1; }
+  nav button {
+    border: 1px solid var(--line); background: transparent; font: inherit; font-size: 13px;
+    font-weight: 550; color: var(--ink-soft); padding: 5px 14px; border-radius: 7px; cursor: pointer;
+    transition: border-color 150ms var(--ease-out), color 150ms var(--ease-out);
+  }
+  nav button:hover { border-color: var(--accent); color: var(--accent); }
   body {
     font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     background: var(--paper);
@@ -162,6 +181,22 @@
     background: oklch(95% 0.03 25); color: var(--bad); font-size: 14px;
   }
   .hidden { display: none; }
+
+  /* --- History --- */
+  #history { margin-top: 56px; }
+  #history h2 { font-size: 16px; font-weight: 650; margin-bottom: 12px; }
+  .hist-row {
+    display: flex; align-items: baseline; gap: 14px; width: 100%; text-align: left;
+    background: transparent; border: 0; border-bottom: 1px solid var(--line);
+    font: inherit; color: var(--ink); padding: 11px 4px; cursor: pointer;
+    transition: background 150ms var(--ease-out);
+  }
+  .hist-row:hover { background: var(--accent-soft); }
+  .hist-row .hname { font-weight: 600; flex: 1; }
+  .hist-row .hscore { font-variant-numeric: tabular-nums; color: var(--ink-soft); font-size: 13.5px; }
+  .hist-row .hdate { color: var(--ink-faint); font-size: 12.5px; white-space: nowrap; }
+  .hist-empty { color: var(--ink-faint); font-size: 13.5px; }
+
   @media (prefers-reduced-motion: reduce) {
     #results > section { animation-duration: 1ms; }
     .meter i { transition-duration: 1ms; }
@@ -170,6 +205,13 @@
 </style>
 </head>
 <body>
+<nav>
+  <span class="brand">HR-Agent</span>
+  <a href="/" class="active">Analyze</a>
+  <a href="/builder.html">Builder</a>
+  <span class="spacer"></span>
+  <button id="logout">Log out</button>
+</nav>
 <main>
   <header>
     <h1>HR-Agent</h1>
@@ -211,10 +253,26 @@
 
   <div id="error" class="error hidden"></div>
   <div id="results"></div>
+
+  <section id="history">
+    <h2>History</h2>
+    <div id="history-list"><p class="hist-empty">Loading past analyses...</p></div>
+  </section>
 </main>
 
 <script>
 const $ = id => document.getElementById(id);
+
+async function authFetch(url, opts) {
+  const res = await fetch(url, opts);
+  if (res.status === 401) { location = "/login.html"; throw new Error("unauthorized"); }
+  return res;
+}
+$("logout").addEventListener("click", async () => {
+  await fetch("/api/logout", { method: "POST" });
+  location = "/login.html";
+});
+
 const drop = $("drop"), fileInput = $("file"), runBtn = $("run");
 let file = null;
 
@@ -268,10 +326,11 @@ $("form").addEventListener("submit", async e => {
   fd.append("jd_text", jdText);
 
   try {
-    const res = await fetch("/api/analyze", { method: "POST", body: fd });
+    const res = await authFetch("/api/analyze", { method: "POST", body: fd });
     const { job_id, error } = await res.json();
     if (error) throw new Error(error);
     await poll(job_id, hasJd);
+    loadHistory();
   } catch (err) {
     showError(err.message);
   } finally {
@@ -282,7 +341,7 @@ $("form").addEventListener("submit", async e => {
 const ORDER = ["parse", "github", "jd", "evaluate"];
 async function poll(jobId, hasJd) {
   while (true) {
-    const res = await fetch("/api/jobs/" + jobId);
+    const res = await authFetch("/api/jobs/" + jobId);
     const job = await res.json();
     const idx = ORDER.indexOf(job.stage);
     document.querySelectorAll(".step").forEach(s => {
@@ -365,6 +424,36 @@ function render(r) {
     document.querySelectorAll(".meter i").forEach(i => { i.style.transform = `scaleX(${i.dataset.pct / 100})`; });
   }));
 }
+
+/* --- History --- */
+async function loadHistory() {
+  try {
+    const res = await authFetch("/api/history");
+    const items = await res.json();
+    const list = $("history-list");
+    if (!items.length) {
+      list.innerHTML = '<p class="hist-empty">No analyses yet. Run one above and it will show up here.</p>';
+      return;
+    }
+    list.innerHTML = items.map(a => `
+      <button class="hist-row" data-id="${a.id}">
+        <span class="hname">${esc(a.candidate || "Unknown candidate")}</span>
+        <span class="hscore">${a.total_score != null ? a.total_score : "–"}</span>
+        <span class="hdate">${a.created_at ? new Date(a.created_at).toLocaleDateString() : ""}</span>
+      </button>`).join("");
+    list.querySelectorAll(".hist-row").forEach(btn => btn.addEventListener("click", async () => {
+      try {
+        const res = await authFetch("/api/analyses/" + btn.dataset.id);
+        const data = await res.json();
+        $("pipeline").classList.add("hidden");
+        $("error").classList.add("hidden");
+        render(data.result || data);
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } catch (e) { if (e.message !== "unauthorized") showError(e.message); }
+    }));
+  } catch (e) { /* 401 already redirected */ }
+}
+loadHistory();
 </script>
 </body>
 </html>
