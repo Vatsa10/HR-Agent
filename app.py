@@ -951,6 +951,14 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 if __name__ == "__main__":
+    import os
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    # Pass the app as an import string so reload/workers can work.
+    # RELOAD=1 for hot-reload in dev; PORT/HOST override for deploy.
+    uvicorn.run(
+        "app:app",
+        host=os.environ.get("HOST", "127.0.0.1"),
+        port=int(os.environ.get("PORT", "8000")),
+        reload=os.environ.get("RELOAD", "") == "1",
+    )

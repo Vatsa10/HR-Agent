@@ -186,6 +186,9 @@ function BuilderInner() {
   const [ctxSave, setCtxSave] = useState("Save context");
 
   const linkedinResumes = resumes.filter((r) => (r.filename || "").startsWith("LinkedIn:"));
+  // The main resume picker is for actual resumes only; imported LinkedIn
+  // profiles belong to the secondary-context dropdown, not here.
+  const pickResumes = resumes.filter((r) => !(r.filename || "").startsWith("LinkedIn:"));
 
   // Load resumes + JDs + profile, then apply ?jd= / ?resume= deep-link preselect.
   useEffect(() => {
@@ -202,8 +205,9 @@ function BuilderInner() {
         setJds(j);
         const qResume = searchParams.get("resume");
         const qJd = searchParams.get("jd");
+        const pick = r.filter((x) => !(x.filename || "").startsWith("LinkedIn:"));
         if (qResume && r.some((x) => String(x.id) === qResume)) setResumeId(qResume);
-        else if (r.length) setResumeId(String(r[0].id));
+        else if (pick.length) setResumeId(String(pick[0].id));
         if (qJd && j.some((x) => String(x.id) === qJd)) setJdId(qJd);
         // profile context
         setGithub(me.github_url || "");
@@ -331,7 +335,7 @@ function BuilderInner() {
     URL.revokeObjectURL(a.href);
   }
 
-  const hasResume = resumes.length > 0;
+  const hasResume = pickResumes.length > 0;
 
   return (
     <div className="print:block">
@@ -381,7 +385,7 @@ function BuilderInner() {
                 disabled={loading || !hasResume}
               >
                 {hasResume ? (
-                  resumes.map((r) => (
+                  pickResumes.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.filename}
                     </option>
