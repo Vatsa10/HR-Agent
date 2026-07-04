@@ -413,13 +413,14 @@ async def api_jds(request: Request):
 
 # ---------------- resume builder ----------------
 
-def _run_build(job_id, user, resume_id, jd_id, jd_text, parsed):
-    """Background: GitHub + LinkedIn enrichment + LLM rewrite. Slow (2 LLM
-    calls + possible API fan-out), so it must not block the request."""
+def _run_build(job_id, user, resume_id, jd_id, jd_text, parsed, page_count=1, include_github=False):
+    """Background: optional GitHub + LinkedIn enrichment + LLM rewrite. GitHub is
+    opt-in (slow repo walk), so the default fast path skips it and reuses the
+    stored jd_match plus saved context."""
     job = JOBS[job_id]
     try:
         github_data = None
-        if user.get("github_url"):
+        if include_github and user.get("github_url"):
             try:
                 job["stage"] = "github"
                 from github import fetch_and_display_github_info
@@ -462,6 +463,7 @@ def _run_build(job_id, user, resume_id, jd_id, jd_text, parsed):
         built = build_resume(
             parsed, jd_text, github_data, extras_cfg or None,
             jd_match=jd_match, linkedin_text=linkedin_text,
+            page_count=page_count,
         )
         content = built["content"]
         tailoring_notes = built.get("tailoring_notes") or []
@@ -490,6 +492,8 @@ async def api_build(request: Request):
     body = await request.json()
     resume_id = body.get("resume_id")
     jd_id = body.get("jd_id")
+    page_count = 2 if int(body.get("page_count") or 1) == 2 else 1
+    include_github = bool(body.get("include_github"))
     resume_row = db.get_resume(resume_id, user["id"]) if resume_id else None
     if not resume_row:
         return JSONResponse({"error": "resume not found"}, status_code=404)
@@ -504,7 +508,7 @@ async def api_build(request: Request):
     JOBS[job_id] = {"status": "running", "stage": "build"}
     threading.Thread(
         target=_run_build,
-        args=(job_id, user, resume_id, jd_id, jd_text, resume_row["parsed"] or {}),
+        args=(job_id, user, resume_id, jd_id, jd_text, resume_row["parsed"] or {}, page_count, include_github),
         daemon=True,
     ).start()
     return {"job_id": job_id}

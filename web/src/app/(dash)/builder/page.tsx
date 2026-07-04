@@ -5,7 +5,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api, pollJob } from "@/lib/api";
-import { Button, Card, Field, Input, Select, Textarea, Skeleton, ErrorInline } from "@/components/ui";
+import { Button, Card, Field, Input, Select, Textarea, Skeleton, ErrorInline, Segmented, Toggle } from "@/components/ui";
 import { cn } from "@/lib/format";
 
 /* ------------------------------------------------------------------ *
@@ -173,6 +173,8 @@ function BuilderInner() {
   const [jds, setJds] = useState<JdRow[]>([]);
   const [resumeId, setResumeId] = useState("");
   const [jdId, setJdId] = useState("");
+  const [pageCount, setPageCount] = useState<1 | 2>(1);
+  const [includeGithub, setIncludeGithub] = useState(false);
 
   const [content, setContent] = useState<ResumeContent | null>(null);
   const [genId, setGenId] = useState<number | null>(null);
@@ -290,13 +292,20 @@ function BuilderInner() {
       // is slow); start it and poll so the request never hangs.
       const { job_id } = await api<{ job_id: string }>("/build", {
         method: "POST",
-        body: { resume_id: Number(resumeId), jd_id: jdId ? Number(jdId) : null },
+        body: {
+          resume_id: Number(resumeId),
+          jd_id: jdId ? Number(jdId) : null,
+          page_count: pageCount,
+          include_github: includeGithub,
+        },
       });
       const data = await pollJob<BuildResult>(job_id, (s, l) => {
         if (mounted.current) setGenStage(l || s || "");
       });
       if (!mounted.current) return;
       setGenId(data.id);
+      const pc = data.content?._page_count;
+      if (pc === 1 || pc === 2) setPageCount(pc);
       setContent(data.content);
       setMarkdown(data.markdown || "");
       setNotes(data.tailoring_notes || data.content?._tailoring_notes || []);
@@ -363,15 +372,31 @@ function BuilderInner() {
     <div className="print:block">
       {/* Print rules: show only the sheet, A4-ish. */}
       <style>{`
+        /* Compact (1-page) variant: tighter rhythm, smaller type, denser gaps.
+           Applied by class switch on the sheet, not a fork of the component. */
+        #resume-sheet.is-compact { font-size: 0.94em; line-height: 1.32; }
+        #resume-sheet.is-compact h2 { margin-top: 0.85rem; margin-bottom: 0.3rem; }
+        #resume-sheet.is-compact .mb-4 { margin-bottom: 0.6rem; }
+        #resume-sheet.is-compact .mb-3 { margin-bottom: 0.45rem; }
+        #resume-sheet.is-compact ul { margin-top: 0.25rem; }
+        #resume-sheet.is-compact ul li { line-height: 1.3; }
+        #resume-sheet.is-compact header p { margin-top: 0.5rem; }
+
         @media print {
+          @page { size: A4; margin: 14mm; }
           body { background: #fff; }
           body * { visibility: hidden; }
           #resume-sheet, #resume-sheet * { visibility: visible; }
           #resume-sheet {
             position: absolute; left: 0; top: 0; width: 100%;
             border: none; border-radius: 0; box-shadow: none; padding: 0;
+            max-width: none;
           }
           #resume-sheet [contenteditable] { background: none !important; box-shadow: none !important; }
+          /* 1-page tuned to a single sheet: tighter still, avoid overflow. */
+          #resume-sheet.is-compact { font-size: 10pt; line-height: 1.28; }
+          #resume-sheet.is-compact h2 { margin-top: 0.6rem; }
+          /* 2-page allows natural flow across sheets. */
         }
       `}</style>
 
@@ -449,6 +474,36 @@ function BuilderInner() {
                 </Select>
               )}
             </Field>
+
+            <Field label="Page length">
+              <Segmented<1 | 2>
+                aria-label="Page length"
+                value={pageCount}
+                onChange={setPageCount}
+                options={[
+                  { value: 1, label: "1 page" },
+                  { value: 2, label: "2 pages" },
+                ]}
+              />
+            </Field>
+
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <label htmlFor="gh-toggle" className="text-sm font-medium text-ink">
+                  Include GitHub projects
+                </label>
+                <p className="mt-0.5 text-xs text-ink-faint">
+                  Slower, walks your repositories. Off uses your resume, JD match, and saved context.
+                </p>
+              </div>
+              <Toggle
+                id="gh-toggle"
+                aria-label="Include GitHub projects"
+                checked={includeGithub}
+                onChange={setIncludeGithub}
+                className="mt-0.5"
+              />
+            </div>
 
             <Button
               onClick={generate}
@@ -643,7 +698,16 @@ function BuilderInner() {
               </p>
             </Card>
           ) : (
-            <Sheet content={content} sheetRef={sheetRef} onRemoveSection={removeSection} />
+            <Sheet
+              content={content}
+              sheetRef={sheetRef}
+              onRemoveSection={removeSection}
+              pageCount={
+                content._page_count === 1 || content._page_count === 2
+                  ? (content._page_count as 1 | 2)
+                  : pageCount
+              }
+            />
           )}
         </section>
       </div>
@@ -720,11 +784,14 @@ function Sheet({
   content,
   sheetRef,
   onRemoveSection,
+  pageCount,
 }: {
   content: ResumeContent;
   sheetRef: React.RefObject<HTMLDivElement | null>;
   onRemoveSection: (i: number) => void;
+  pageCount: 1 | 2;
 }) {
+  const compact = pageCount === 1;
   const b = content.basics || {};
   const contact: React.ReactNode[] = [];
   if (b.email != null) contact.push(<Ed key="email" path="basics.email" value={b.email} />);
@@ -737,7 +804,11 @@ function Sheet({
     <div
       id="resume-sheet"
       ref={sheetRef}
-      className="mx-auto w-full max-w-[820px] rounded-xl border border-line bg-paper p-8 shadow-sm md:p-12"
+      data-page-count={pageCount}
+      className={cn(
+        "resume-sheet mx-auto w-full max-w-[820px] rounded-xl border border-line bg-paper shadow-sm",
+        compact ? "is-compact p-6 md:p-10" : "p-8 md:p-12",
+      )}
     >
       {/* Header */}
       <header className="text-center">

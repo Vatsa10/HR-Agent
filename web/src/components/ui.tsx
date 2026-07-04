@@ -163,6 +163,99 @@ export function Card({ as: Tag = "div", padded = true, className, children, ...r
 }
 
 /* ------------------------------------------------------------------ *
+ * Segmented control
+ * ------------------------------------------------------------------ */
+
+export interface SegmentedOption<T extends string | number> {
+  value: T;
+  label: React.ReactNode;
+}
+
+export interface SegmentedProps<T extends string | number> {
+  options: SegmentedOption<T>[];
+  value: T;
+  onChange: (v: T) => void;
+  className?: string;
+  "aria-label"?: string;
+}
+
+/** A single-select pill group. Blue-filled active segment. */
+export function Segmented<T extends string | number>({
+  options,
+  value,
+  onChange,
+  className,
+  ...rest
+}: SegmentedProps<T>) {
+  return (
+    <div
+      role="group"
+      className={cn("inline-flex w-full rounded-lg border border-line bg-surface p-0.5", className)}
+      {...rest}
+    >
+      {options.map((o) => {
+        const active = o.value === value;
+        return (
+          <button
+            key={String(o.value)}
+            type="button"
+            aria-pressed={active}
+            onClick={() => onChange(o.value)}
+            className={cn(
+              "flex-1 rounded-[7px] px-3 py-1.5 text-[13px] font-medium cursor-pointer select-none",
+              "transition-[transform,background-color,color] duration-150 [transition-timing-function:var(--ease)] active:scale-[0.97]",
+              "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--blue-ring)]",
+              active ? "bg-blue text-white" : "text-ink-soft hover:text-ink hover:bg-surface-2",
+            )}
+          >
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ *
+ * Toggle (switch)
+ * ------------------------------------------------------------------ */
+
+export interface ToggleProps {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  id?: string;
+  className?: string;
+  "aria-label"?: string;
+}
+
+export function Toggle({ checked, onChange, id, className, ...rest }: ToggleProps) {
+  return (
+    <button
+      id={id}
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={cn(
+        "relative inline-flex h-5 w-9 shrink-0 items-center rounded-full cursor-pointer",
+        "transition-[background-color] duration-150 [transition-timing-function:var(--ease)]",
+        "focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-[var(--blue-ring)]",
+        checked ? "bg-blue" : "bg-surface-2 border border-line",
+        className,
+      )}
+      {...rest}
+    >
+      <span
+        className={cn(
+          "inline-block size-4 rounded-full bg-white shadow-sm transition-transform duration-150 [transition-timing-function:var(--ease)]",
+          checked ? "translate-x-[18px]" : "translate-x-0.5",
+        )}
+      />
+    </button>
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * Badge / Chip / StatusDot
  * ------------------------------------------------------------------ */
 

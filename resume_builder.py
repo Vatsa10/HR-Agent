@@ -28,6 +28,9 @@ Rules (follow strictly):
   * Reorder skills, projects, and bullet highlights so items backing "met" requirements appear first.
 - Alongside the resume, produce "tailoring_notes": a list of short strings, each explaining one concrete change you made and why (e.g. "Moved Kubernetes to top of skills: met must-have requirement"). Keep them factual and specific. Empty list if no JD match analysis was provided.
 
+LENGTH DIRECTIVE:
+{length_directive}
+
 Output shape (JSON object with "resume" holding a JSON Resume style object; keep keys even if arrays are empty):
 {{
   "resume": {{
@@ -61,6 +64,21 @@ EXTRA SECTIONS:
 {extras}
 
 Respond ONLY with the valid JSON object."""
+
+
+LENGTH_DIRECTIVE_ONE = (
+    "Target ONE A4 page. Keep ONLY the most impactful content: the top ~3-4 most "
+    "recent or JD-relevant roles, terse metric-first bullets (max ~3 per role), a "
+    "single compact skills line, and the top ~2-3 projects. Drop older, weaker, or "
+    "redundant items entirely. The result must fit on one A4 page: be ruthless about "
+    "cutting anything that does not earn its space."
+)
+
+LENGTH_DIRECTIVE_TWO = (
+    "Target TWO A4 pages. Provide fuller detail: more roles, more bullets per role, "
+    "and more projects are allowed, but stay tight and impact-first. Do not pad with "
+    "filler; every bullet still leads with impact and a metric where the material supports it."
+)
 
 
 def _fmt_dates(item: dict) -> str:
@@ -215,6 +233,7 @@ def build_resume(
     extras: Optional[dict] = None,
     jd_match: Optional[dict] = None,
     linkedin_text: Optional[str] = None,
+    page_count: int = 1,
 ) -> dict:
     """Improve a parsed resume via one LLM call.
 
@@ -224,6 +243,7 @@ def build_resume(
     Returns {'content': <JSON Resume dict>, 'markdown': <str>,
     'tailoring_notes': <list[str]>}.
     """
+    page_count = 2 if int(page_count or 1) == 2 else 1
     provider = initialize_llm_provider(DEFAULT_MODEL)
     params = MODEL_PARAMETERS.get(DEFAULT_MODEL, {"temperature": 0.1, "top_p": 0.9})
     prompt = BUILD_PROMPT.format(
@@ -233,6 +253,7 @@ def build_resume(
         github=json.dumps(github_data, indent=2, default=str) if github_data else "(none provided)",
         linkedin=linkedin_text or "(none provided)",
         extras=json.dumps(extras, indent=2, default=str) if extras else "(none provided)",
+        length_directive=LENGTH_DIRECTIVE_ONE if page_count == 1 else LENGTH_DIRECTIVE_TWO,
     )
     content = None
     tailoring_notes: list = []
@@ -267,6 +288,8 @@ def build_resume(
         content = dict(parsed)
         if extras:
             content.setdefault("extras", {}).update(extras)
+
+    content["_page_count"] = page_count
 
     return {
         "content": content,
@@ -330,4 +353,23 @@ if __name__ == "__main__":
     # empty-ish resume should not crash
     md2 = json_resume_to_markdown({})
     assert md2.startswith("# Resume")
+
+    # length directive: 1-page vs 2-page prompt text differs
+    def _prompt(pc):
+        return BUILD_PROMPT.format(
+            parsed="{}", jd="(none)", jd_match="(none)", github="(none)",
+            linkedin="(none)", extras="(none)",
+            length_directive=LENGTH_DIRECTIVE_ONE if pc == 1 else LENGTH_DIRECTIVE_TWO,
+        )
+    p1, p2 = _prompt(1), _prompt(2)
+    assert p1 != p2
+    assert "ONE A4 page" in p1 and "ONE A4 page" not in p2
+    assert "TWO A4 pages" in p2
+
+    # _page_count is set in content and ignored by the markdown renderer
+    built_content = dict(sample)
+    built_content["_page_count"] = 1
+    md3 = json_resume_to_markdown(built_content)
+    assert md3.startswith("# Jane Doe")
+    assert "_page_count" not in md3 and "page_count" not in md3
     print("resume_builder self-check OK")
