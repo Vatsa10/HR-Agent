@@ -48,6 +48,7 @@ class Basics(BaseModel):
     """Basic information for JSON Resume format."""
 
     name: str
+    label: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
     url: Optional[str] = None
@@ -62,6 +63,7 @@ class Work(BaseModel):
     name: Optional[str] = None
     position: Optional[str] = None
     url: Optional[str] = None
+    location: Optional[str] = None
     startDate: Optional[str] = None
     endDate: Optional[str] = None
     summary: Optional[str] = None

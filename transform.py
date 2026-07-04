@@ -212,6 +212,7 @@ def transform_work_experience(work_list: List) -> List[Dict]:
                         "position", item.get("type", item.get("title", ""))
                     ),
                     "url": item.get("url", None),
+                    "location": item.get("location", None),
                     "startDate": start_date,
                     "endDate": end_date,
                     "summary": item.get("summary", description),

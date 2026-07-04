@@ -10,8 +10,9 @@ Return ONLY a JSON object with this structure:
 {
   "work": [
     {
-      "name": "Company name",
-      "position": "Job title", 
+      "name": "Company name (company name only, without city/location suffix)",
+      "position": "Job title",
+      "location": "Job location if given next to the company (e.g. 'Vadodara', 'Remote'), else null",
       "startDate": "Start date (YYYY-MM)",
       "endDate": "End date (YYYY-MM) or 'Present'",
       "summary": "Job description",
