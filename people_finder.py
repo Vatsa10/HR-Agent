@@ -10,6 +10,7 @@ Best-effort: search() always returns {query_understood, people}; people is []
 on any failure but the parsed intent is always included.
 """
 
+import concurrent.futures
 import json
 import logging
 
@@ -219,45 +220,59 @@ def _build_query(parsed):
     return " ".join(p.strip() for p in parts if p and p.strip()).strip()
 
 
+def _fetch_and_parse(source_fn):
+    """Run one LinkedIn source (scrape) then parse its blob into people."""
+    res = source_fn()
+    return parse_people_blob(_sections_text(res), _refs(res))
+
+
 def search(nl_query):
-    """Parse the query then run a LinkedIn people search.
+    """Parse the query then run LinkedIn people search(es) CONCURRENTLY.
 
-    Branches on the parsed company:
-    - company set: list that company's employees (keyword-biased to the desired
-      role) via linkedin_service.company_employees, which is far more accurate
-      for "recruiters AT <company>". If it yields at least one person, use it.
-    - otherwise (or if company_employees yielded nothing): a free
-      linkedin_service.search_people over the built query, location-filtered.
+    When a company is named we run TWO sources in parallel (via the warm
+    browser's page pool): that company's employee directory (keyword-biased to
+    the role, far more accurate for "recruiters AT <company>") and a free
+    people search. They run on separate threads so the wall-clock is one
+    scrape, not two. Results merge company-directory-first, deduped by profile.
+    Without a company, just the free search.
 
-    Returns {query_understood: <parsed dict>, people: [{name, headline, company,
-    location, profile_url}]}. Best-effort: people is [] on total failure but
-    query_understood is always present.
+    Returns {query_understood, people: [{name, headline, company, location,
+    profile_url}]}. Best-effort: people is [] on total failure.
     """
     parsed = parse_query(nl_query)
     query = _build_query(parsed) or (nl_query or "").strip()
     company = parsed.get("company") or ""
-    people = []
+    location = parsed.get("location") or None
 
+    # Build the source tasks (labelled so we can merge in priority order).
+    tasks = []
     if company:
         kw = parsed.get("role") or parsed.get("keywords") or "recruiter"
-        try:
-            res = linkedin_service.company_employees(company, keywords=kw)
-            people = parse_people_blob(_sections_text(res), _refs(res))
-        except Exception as e:  # noqa: BLE001
-            logger.warning("company_employees failed for %s: %s", company, e)
-            people = []
+        tasks.append(("company", lambda: linkedin_service.company_employees(company, keywords=kw)))
+    if query:
+        tasks.append(("search", lambda: linkedin_service.search_people(query, location=location)))
 
-    if not people and query:
-        try:
-            res = linkedin_service.search_people(
-                query, location=(parsed.get("location") or None)
-            )
-            people = parse_people_blob(_sections_text(res), _refs(res))
-        except Exception as e:  # noqa: BLE001
-            logger.warning("people search failed: %s", e)
-            people = []
+    results = {}
+    if tasks:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(tasks)) as ex:
+            futs = {ex.submit(_fetch_and_parse, fn): label for label, fn in tasks}
+            for fut in concurrent.futures.as_completed(futs):
+                label = futs[fut]
+                try:
+                    results[label] = fut.result()
+                except Exception as e:  # noqa: BLE001
+                    logger.warning("%s people fetch failed: %s", label, e)
+                    results[label] = []
 
-    return {"query_understood": parsed, "people": people}
+    # Merge: company directory first (more accurate), then free search; dedup.
+    merged, seen = [], set()
+    for label in ("company", "search"):
+        for p in results.get(label, []):
+            key = (p.get("profile_url") or p.get("name") or "").strip().lower()
+            if key and key not in seen:
+                seen.add(key)
+                merged.append(p)
+    return {"query_understood": parsed, "people": merged[:8]}
 
 
 if __name__ == "__main__":
@@ -363,7 +378,9 @@ if __name__ == "__main__":
         _self.parse_query = _orig_parse_query
         _self.parse_people_blob = _orig_ppb
     assert "query_understood" in result
-    assert calls["company"] == 1 and calls["search"] == 0, calls  # company path taken, no fallback
+    # both sources run CONCURRENTLY when a company is named; results merge
+    # company-directory-first and dedup by profile url.
+    assert calls["company"] == 1 and calls["search"] == 1, calls
     assert len(result["people"]) == 1 and result["people"][0]["company"] == "Google", result
 
     # ---- search(): no company -> free people search path ----

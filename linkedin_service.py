@@ -24,7 +24,7 @@ from linkedin_common import has_session, session_path
 
 logger = logging.getLogger(__name__)
 
-_POOL_SIZE = int(os.environ.get("LI_POOL_SIZE", "2"))
+_POOL_SIZE = int(os.environ.get("LI_POOL_SIZE", "3"))
 
 
 def _require_session():
