@@ -18,8 +18,8 @@ import asyncio
 import json
 import os
 
-# linkedin_mcp_server is installed from PyPI (mcp-server-linkedin), see
-# requirements.txt. Do not vendor its source into this repo.
+# The linkedin_mcp_server extractor is vendored into this repo (./linkedin_mcp_server),
+# it is our code now; only its third-party libs are pip dependencies.
 from linkedin_common import has_session, session_path
 
 
