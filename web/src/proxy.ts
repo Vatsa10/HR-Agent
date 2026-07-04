@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 // Dashboard paths guarded by the presence of the "session" cookie. Auth is
-// cookie-session only; middleware just gates navigation, the backend is the
+// cookie-session only; this proxy just gates navigation, the backend is the
 // real authority (401 -> client redirects to /signin).
 const GUARDED = [
   "/analyze",
@@ -14,7 +14,7 @@ const GUARDED = [
   "/dashboard",
 ];
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   // /dashboard -> /analyze
