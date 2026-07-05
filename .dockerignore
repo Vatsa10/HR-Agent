@@ -1,0 +1,14 @@
+web/
+venv/
+.venv/
+linkedin_scraper/
+node_modules/
+__pycache__/
+*.pyc
+.git/
+cache/
+docs/
+*.pdf
+linkedin_session.json
+.env
+resume_evaluations.csv

@@ -1,0 +1,31 @@
+# Render Blueprint for the Do Apply backend (FastAPI + Patchright).
+# Set the region to match your Neon database region so backend<->DB latency is
+# single-digit ms. Secrets (DATABASE_URL, OPENAI_API_KEY, GITHUB_TOKEN) are set
+# in the Render dashboard, not here.
+services:
+  - type: web
+    name: doapply-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    region: singapore # change to your Neon region (e.g. oregon, frankfurt)
+    plan: starter
+    healthCheckPath: /api/healthz
+    envVars:
+      - key: LLM_PROVIDER
+        value: openai
+      - key: DEFAULT_MODEL
+        value: gpt-4o-mini
+      - key: COOKIE_SECURE
+        value: "1"
+      - key: COOKIE_SAMESITE
+        value: lax
+      # Path where the LinkedIn session secret file is mounted (see DEPLOY.md).
+      - key: LINKEDIN_SESSION_PATH
+        value: /etc/secrets/linkedin_session.json
+      # Set these in the dashboard (sync:false keeps them out of git):
+      - key: DATABASE_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false

@@ -64,6 +64,12 @@ JOBS: dict = {}
 JOBS_DIR = Path("cache") / "jobs"
 
 
+@app.get("/api/healthz")
+async def healthz():
+    """Liveness probe for Render (no DB, always fast)."""
+    return {"ok": True}
+
+
 def current_user(request: Request):
     token = request.cookies.get("session")
     if not token:
@@ -188,6 +194,36 @@ async def api_logout(request: Request):
     resp = JSONResponse({"ok": True})
     resp.delete_cookie("session")
     return resp
+
+
+@app.get("/api/bootstrap")
+async def api_bootstrap(request: Request):
+    """One round-trip for common page data (resumes, jds, prefs, profile).
+
+    Pages that would otherwise fire 3-4 separate /api calls (each a DB
+    round-trip) can load everything here at once. Sections are best-effort so a
+    single failing query never blanks the whole page."""
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    out = {
+        "me": {
+            "email": user["email"],
+            "github_url": user.get("github_url"),
+            "extras": user.get("extras") or {},
+        }
+    }
+    for key, fn in (
+        ("resumes", lambda: db.list_resumes(user["id"])),
+        ("jds", lambda: db.list_jds(user["id"])),
+        ("prefs", lambda: db.get_job_prefs(user["id"])),
+    ):
+        try:
+            out[key] = fn()
+        except Exception:
+            logger.exception("bootstrap %s failed", key)
+            out[key] = [] if key != "prefs" else {}
+    return out
 
 
 @app.get("/api/me")

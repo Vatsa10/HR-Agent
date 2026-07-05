@@ -205,12 +205,16 @@ function BuilderInner() {
     let alive = true;
     (async () => {
       try {
-        const [r, j, me] = await Promise.all([
-          api<ResumeRow[]>("/resumes"),
-          api<JdRow[]>("/jds"),
-          api<{ github_url?: string; extras?: Record<string, unknown> }>("/me"),
-        ]);
+        // One round-trip instead of three (resumes + jds + me).
+        const boot = await api<{
+          resumes: ResumeRow[];
+          jds: JdRow[];
+          me: { github_url?: string; extras?: Record<string, unknown> };
+        }>("/bootstrap");
         if (!alive) return;
+        const r = boot.resumes || [];
+        const j = boot.jds || [];
+        const me = boot.me || {};
         setResumes(r);
         setJds(j);
         const qResume = searchParams.get("resume");
