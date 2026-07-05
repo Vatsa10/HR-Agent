@@ -28,6 +28,7 @@ import job_search
 import jd_matcher
 import people_finder
 from agents import build_graph
+from pdf import PDFHandler
 from resume_builder import build_resume, json_resume_to_markdown
 
 logging.basicConfig(level=logging.INFO)
@@ -111,6 +112,7 @@ STAGE_LABELS = {
     "jd": "JD Agent matching the job description",
     "evaluate": "Evaluator Agent scoring the candidate",
     "linkedin": "LinkedIn Agent importing the profile",
+    "audit": "Auditing your LinkedIn profile",
     "search": "Searching LinkedIn jobs and scoring fit",
     "hr": "Finding recruiters at the company",
     "build": "Rewriting your resume",
@@ -406,6 +408,109 @@ async def api_import_linkedin(request: Request):
     threading.Thread(
         target=_run_linkedin_import,
         args=(job_id, profile_url, user["id"]),
+        daemon=True,
+    ).start()
+    return {"job_id": job_id}
+
+
+def _run_linkedin_audit(job_id: str, user, pdf_bytes, profile_url: str, resume_id):
+    """Background worker: build profile text (PDF or URL scrape), pull the
+    stored resume + latest analysis, and run the recruiter-lens audit."""
+    job = JOBS[job_id]
+    try:
+        import linkedin_optimizer
+
+        user_id = user["id"]
+
+        # 1. profile_text from PDF bytes or a scraped profile URL.
+        profile_text = ""
+        if pdf_bytes:
+            tmp = tempfile.NamedTemporaryFile(suffix=".pdf", prefix="li_", delete=False)
+            tmp.write(pdf_bytes)
+            tmp.close()
+            try:
+                handler = PDFHandler()
+                profile_text = handler.extract_text_from_pdf(tmp.name) or ""
+                if not profile_text.strip():
+                    parsed_pdf = handler.extract_json_from_pdf(tmp.name)
+                    if parsed_pdf is not None:
+                        from transform import convert_json_resume_to_text
+
+                        profile_text = convert_json_resume_to_text(parsed_pdf) or ""
+            finally:
+                try:
+                    Path(tmp.name).unlink()
+                except OSError:
+                    pass
+        elif profile_url:
+            import linkedin_service
+
+            result = linkedin_service.profile_sections(profile_url)
+            sections = (result or {}).get("sections") or {}
+            profile_text = "\n\n".join(str(v) for v in sections.values() if v)
+
+        if not profile_text.strip():
+            job["status"] = "error"
+            job["error"] = "Provide a LinkedIn URL or PDF"
+            _persist_job(job_id, job)
+            return
+
+        # 2. stored resume: parsed dict (chosen or latest).
+        row, _text = _resume_text_for(user_id, resume_id)
+        resume_dict = (row or {}).get("parsed") or {} if row else {}
+
+        # 3. latest analysis result for the user.
+        analysis_result = None
+        try:
+            analyses = db.list_analyses(user_id)
+            if analyses:
+                latest = db.get_analysis(analyses[0]["id"], user_id)
+                if latest:
+                    analysis_result = latest.get("result")
+        except Exception:
+            logger.exception("audit: loading latest analysis failed")
+
+        job["result"] = linkedin_optimizer.audit(profile_text, resume_dict, analysis_result)
+        job["status"] = "done"
+    except Exception as e:
+        logger.exception("LinkedIn audit failed")
+        job["status"] = "error"
+        job["error"] = str(e)
+    _persist_job(job_id, job)
+
+
+@app.post("/api/linkedin/audit")
+async def api_linkedin_audit(
+    request: Request,
+    pdf: UploadFile = File(None),
+    profile_url: str = Form(""),
+    resume_id: str = Form(""),
+):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+
+    pdf_bytes = None
+    if pdf is not None and pdf.filename:
+        pdf_bytes = await pdf.read()
+    profile_url = (profile_url or "").strip()
+    if not pdf_bytes and "linkedin.com/in/" not in profile_url:
+        return JSONResponse(
+            {"error": "Provide a LinkedIn profile URL or upload a PDF export"},
+            status_code=400,
+        )
+    rid = None
+    if resume_id and str(resume_id).strip():
+        try:
+            rid = int(resume_id)
+        except ValueError:
+            rid = None
+
+    job_id = uuid.uuid4().hex
+    JOBS[job_id] = {"status": "running", "stage": "audit"}
+    threading.Thread(
+        target=_run_linkedin_audit,
+        args=(job_id, user, pdf_bytes, profile_url, rid),
         daemon=True,
     ).start()
     return {"job_id": job_id}
