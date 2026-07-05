@@ -426,19 +426,14 @@ export default function JobsPage() {
   }, []);
 
   useEffect(() => {
-    // Fire each fetch independently so one slow call never blocks the others.
+    // resumes + prefs in one concurrent round-trip; saved jobs in parallel.
     (async () => {
       try {
-        const resumes = await api<{ id: number }[]>("/resumes");
-        if (alive.current && resumes.length) setResumeId(resumes[0].id);
-      } catch {
-        /* ignore */
-      }
-    })();
-    (async () => {
-      try {
-        const p = await api<Prefs>("/prefs");
+        const boot = await api<{ resumes: { id: number }[]; prefs: Prefs }>("/bootstrap");
         if (!alive.current) return;
+        const resumes = boot.resumes || [];
+        if (resumes.length) setResumeId(resumes[0].id);
+        const p = boot.prefs || ({} as Prefs);
         setRoles(Array.isArray(p.roles) ? p.roles : []);
         setLocation(p.location || "");
         setWorkType(p.work_type || "");

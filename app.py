@@ -72,15 +72,39 @@ async def healthz():
     return {"ok": True}
 
 
+# Every authenticated request would otherwise re-query the session table (a
+# ~network round-trip to a remote DB) just to validate the cookie. Cache the
+# token -> user mapping briefly so repeat requests skip that query. The cached
+# user carries github_url/extras, so mutations invalidate the entry (see
+# _bust_session below) to avoid serving stale profile data.
+import time as _time
+
+_SESSION_CACHE: dict = {}  # token -> (user, expires_at)
+_SESSION_TTL = 45.0
+
+
+def _bust_session(request: Request):
+    tok = request.cookies.get("session")
+    if tok:
+        _SESSION_CACHE.pop(tok, None)
+
+
 def current_user(request: Request):
     token = request.cookies.get("session")
     if not token:
         return None
+    now = _time.time()
+    hit = _SESSION_CACHE.get(token)
+    if hit and hit[1] > now:
+        return hit[0]
     try:
-        return db.get_session_user(token)
+        user = db.get_session_user(token)
     except Exception:
         logger.exception("session lookup failed")
         return None
+    if user:
+        _SESSION_CACHE[token] = (user, now + _SESSION_TTL)
+    return user
 
 
 def _unauth():
@@ -190,6 +214,7 @@ async def api_login(request: Request):
 async def api_logout(request: Request):
     token = request.cookies.get("session")
     if token:
+        _SESSION_CACHE.pop(token, None)
         try:
             db.delete_session(token)
         except Exception:
@@ -255,6 +280,7 @@ async def api_me_update(request: Request):
         return _unauth()
     body = await request.json()
     db.update_user_profile(user["id"], body.get("github_url") or None, body.get("extras") or {})
+    _bust_session(request)  # cached user carries github_url/extras
     return {"ok": True}
 
 
@@ -739,7 +765,9 @@ async def api_set_prefs(request: Request):
         "seniority": (body.get("seniority") or "").strip(),
         "work_type": (body.get("work_type") or "").strip(),
     }
-    return db.set_job_prefs(user["id"], prefs)
+    result = db.set_job_prefs(user["id"], prefs)
+    _bust_session(request)  # prefs live in users.extras -> cached user is stale
+    return result
 
 
 # ---------------- job search ----------------

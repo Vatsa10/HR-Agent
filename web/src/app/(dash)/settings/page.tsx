@@ -214,12 +214,12 @@ export default function SettingsPage() {
     let alive = true;
     (async () => {
       try {
-        const [me, res, prefs] = await Promise.all([
-          api<Me>("/me"),
-          api<Resume[]>("/resumes").catch(() => [] as Resume[]),
-          api<Prefs>("/prefs").catch(() => ({}) as Prefs),
-        ]);
+        // One concurrent round-trip instead of three separate requests.
+        const boot = await api<{ me: Me; resumes: Resume[]; prefs: Prefs }>("/bootstrap");
         if (!alive) return;
+        const me = boot.me || ({} as Me);
+        const res = boot.resumes || [];
+        const prefs = boot.prefs || ({} as Prefs);
         setEmail(me.email || "");
         setGithub(me.github_url || "");
         const extras = (me.extras || {}) as Record<string, unknown>;

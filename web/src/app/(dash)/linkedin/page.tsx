@@ -300,9 +300,9 @@ export default function LinkedInOptimizerPage() {
     // Load already-imported LinkedIn profiles so they can be audited instantly.
     (async () => {
       try {
-        const resumes = await api<{ id: number; filename: string }[]>("/resumes");
+        const boot = await api<{ resumes: { id: number; filename: string }[] }>("/bootstrap");
         if (!mounted.current) return;
-        const li = (resumes || []).filter((r) => (r.filename || "").startsWith("LinkedIn:"));
+        const li = (boot.resumes || []).filter((r) => (r.filename || "").startsWith("LinkedIn:"));
         setSavedProfiles(li);
         if (li.length) {
           setMode("saved");
