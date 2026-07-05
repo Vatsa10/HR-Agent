@@ -84,5 +84,29 @@ def session_path() -> str:
     return os.environ.get("LINKEDIN_SESSION_PATH", "linkedin_session.json")
 
 
+def _materialize_from_env() -> None:
+    """On hosts with secret-file support (env vars only, e.g. Hugging Face
+    Spaces), the whole session JSON is provided in LINKEDIN_SESSION_JSON. Write
+    it to session_path() once so the scraper can read it like a normal file."""
+    raw = os.environ.get("LINKEDIN_SESSION_JSON")
+    if not raw:
+        return
+    p = session_path()
+    if os.path.exists(p):
+        return
+    try:
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(raw)
+    except OSError:
+        # Configured path not writable (e.g. read-only mount): use a temp file.
+        import tempfile
+
+        alt = os.path.join(tempfile.gettempdir(), "linkedin_session.json")
+        with open(alt, "w", encoding="utf-8") as f:
+            f.write(raw)
+        os.environ["LINKEDIN_SESSION_PATH"] = alt
+
+
 def has_session() -> bool:
+    _materialize_from_env()
     return os.path.exists(session_path())
