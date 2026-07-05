@@ -10,6 +10,7 @@ import {
   Card,
   Field,
   Input,
+  Select,
   Meter,
   Badge,
   Chip,
@@ -259,12 +260,16 @@ function SectionCard({ s }: { s: AuditSection }) {
  * Page
  * ------------------------------------------------------------------ */
 
-type Mode = "url" | "pdf";
+type Mode = "saved" | "url" | "pdf";
 
 export default function LinkedInOptimizerPage() {
   const [mode, setMode] = useState<Mode>("url");
   const [url, setUrl] = useState("");
   const [file, setFile] = useState<File | null>(null);
+
+  // Already-imported LinkedIn profiles (stored as "LinkedIn:" resumes).
+  const [savedProfiles, setSavedProfiles] = useState<{ id: number; filename: string }[]>([]);
+  const [savedProfileId, setSavedProfileId] = useState("");
 
   const [sessionOk, setSessionOk] = useState<boolean | null>(null);
   const [checking, setChecking] = useState(true);
@@ -292,6 +297,21 @@ export default function LinkedInOptimizerPage() {
   useEffect(() => {
     mounted.current = true;
     checkStatus();
+    // Load already-imported LinkedIn profiles so they can be audited instantly.
+    (async () => {
+      try {
+        const resumes = await api<{ id: number; filename: string }[]>("/resumes");
+        if (!mounted.current) return;
+        const li = (resumes || []).filter((r) => (r.filename || "").startsWith("LinkedIn:"));
+        setSavedProfiles(li);
+        if (li.length) {
+          setMode("saved");
+          setSavedProfileId(String(li[0].id));
+        }
+      } catch {
+        /* non-fatal */
+      }
+    })();
     return () => {
       mounted.current = false;
     };
@@ -306,7 +326,10 @@ export default function LinkedInOptimizerPage() {
       setSaveError(null);
 
       const fd = new FormData();
-      if (mode === "url") {
+      if (mode === "saved") {
+        if (!savedProfileId) return;
+        fd.append("profile_resume_id", savedProfileId);
+      } else if (mode === "url") {
         if (!sessionOk || !validUrl(url)) return;
         fd.append("profile_url", url.trim());
       } else {
@@ -323,7 +346,7 @@ export default function LinkedInOptimizerPage() {
         setSessionOk(false);
       }
     },
-    [mode, url, file, sessionOk, job],
+    [mode, url, file, sessionOk, savedProfileId, job],
   );
 
   const saveAsResume = useCallback(async () => {
@@ -349,7 +372,12 @@ export default function LinkedInOptimizerPage() {
   }, [saving, url]);
 
   const canRun =
-    !job.running && (mode === "url" ? !!sessionOk && validUrl(url) : !!file);
+    !job.running &&
+    (mode === "saved"
+      ? !!savedProfileId
+      : mode === "url"
+        ? !!sessionOk && validUrl(url)
+        : !!file);
 
   const result = job.result;
   const highItems = result?.checklist.filter((c) => c.priority === "high") ?? [];
@@ -367,6 +395,7 @@ export default function LinkedInOptimizerPage() {
         <Segmented<Mode>
           aria-label="Input mode"
           options={[
+            ...(savedProfiles.length ? [{ value: "saved" as Mode, label: "Saved profile" }] : []),
             { value: "url", label: "Profile URL" },
             { value: "pdf", label: "Upload PDF" },
           ]}
@@ -374,7 +403,22 @@ export default function LinkedInOptimizerPage() {
           onChange={setMode}
         />
 
-        {mode === "url" ? (
+        {mode === "saved" ? (
+          <Field label="Imported profile" htmlFor="saved-sel">
+            <Select
+              id="saved-sel"
+              value={savedProfileId}
+              onChange={(e) => setSavedProfileId(e.target.value)}
+            >
+              {savedProfiles.map((p) => (
+                <option key={p.id} value={p.id}>{p.filename}</option>
+              ))}
+            </Select>
+            <p className="text-xs text-ink-faint">
+              Audit an already-imported profile instantly, no re-scrape. Import a new one via Profile URL.
+            </p>
+          </Field>
+        ) : mode === "url" ? (
           <div className="space-y-4">
             {/* Session gate: only for URL mode */}
             {checking ? (

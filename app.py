@@ -413,18 +413,27 @@ async def api_import_linkedin(request: Request):
     return {"job_id": job_id}
 
 
-def _run_linkedin_audit(job_id: str, user, pdf_bytes, profile_url: str, resume_id):
-    """Background worker: build profile text (PDF or URL scrape), pull the
-    stored resume + latest analysis, and run the recruiter-lens audit."""
+def _run_linkedin_audit(job_id: str, user, pdf_bytes, profile_url: str, resume_id, profile_resume_id=None):
+    """Background worker: build profile text (a stored imported profile, a PDF,
+    or a URL scrape), pull the stored resume + latest analysis, and run the
+    recruiter-lens audit."""
     job = JOBS[job_id]
     try:
         import linkedin_optimizer
 
         user_id = user["id"]
 
-        # 1. profile_text from PDF bytes or a scraped profile URL.
+        # 1. profile_text: prefer an already-imported profile (instant, no
+        # scrape/upload), else PDF bytes, else a scraped profile URL.
         profile_text = ""
-        if pdf_bytes:
+        if profile_resume_id:
+            prow = db.get_resume(int(profile_resume_id), user_id)
+            if prow and prow.get("parsed"):
+                try:
+                    profile_text = json_resume_to_markdown(prow["parsed"]) or ""
+                except Exception:
+                    logger.exception("audit: rendering saved profile failed")
+        if not profile_text.strip() and pdf_bytes:
             tmp = tempfile.NamedTemporaryFile(suffix=".pdf", prefix="li_", delete=False)
             tmp.write(pdf_bytes)
             tmp.close()
@@ -451,7 +460,7 @@ def _run_linkedin_audit(job_id: str, user, pdf_bytes, profile_url: str, resume_i
 
         if not profile_text.strip():
             job["status"] = "error"
-            job["error"] = "Provide a LinkedIn URL or PDF"
+            job["error"] = "Provide a saved profile, a LinkedIn URL, or a PDF"
             _persist_job(job_id, job)
             return
 
@@ -485,6 +494,7 @@ async def api_linkedin_audit(
     pdf: UploadFile = File(None),
     profile_url: str = Form(""),
     resume_id: str = Form(""),
+    profile_resume_id: str = Form(""),
 ):
     user = current_user(request)
     if not user:
@@ -494,23 +504,25 @@ async def api_linkedin_audit(
     if pdf is not None and pdf.filename:
         pdf_bytes = await pdf.read()
     profile_url = (profile_url or "").strip()
-    if not pdf_bytes and "linkedin.com/in/" not in profile_url:
+
+    def _int(v):
+        try:
+            return int(v) if v and str(v).strip() else None
+        except ValueError:
+            return None
+
+    prid = _int(profile_resume_id)
+    if not prid and not pdf_bytes and "linkedin.com/in/" not in profile_url:
         return JSONResponse(
-            {"error": "Provide a LinkedIn profile URL or upload a PDF export"},
+            {"error": "Choose a saved profile, a LinkedIn URL, or a PDF export"},
             status_code=400,
         )
-    rid = None
-    if resume_id and str(resume_id).strip():
-        try:
-            rid = int(resume_id)
-        except ValueError:
-            rid = None
 
     job_id = uuid.uuid4().hex
     JOBS[job_id] = {"status": "running", "stage": "audit"}
     threading.Thread(
         target=_run_linkedin_audit,
-        args=(job_id, user, pdf_bytes, profile_url, rid),
+        args=(job_id, user, pdf_bytes, profile_url, _int(resume_id), prid),
         daemon=True,
     ).start()
     return {"job_id": job_id}
