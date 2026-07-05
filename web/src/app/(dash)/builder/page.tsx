@@ -5,7 +5,7 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api, pollJob } from "@/lib/api";
-import { Button, Card, Field, Input, Select, Textarea, Skeleton, ErrorInline, Segmented, Toggle } from "@/components/ui";
+import { Button, Card, Field, Input, Select, Textarea, Skeleton, ErrorInline, Segmented } from "@/components/ui";
 import { cn } from "@/lib/format";
 
 /* ------------------------------------------------------------------ *
@@ -179,7 +179,6 @@ function BuilderInner() {
   const [resumeId, setResumeId] = useState("");
   const [jdId, setJdId] = useState("");
   const [pageCount, setPageCount] = useState<1 | 2>(1);
-  const [includeGithub, setIncludeGithub] = useState(false);
 
   const [content, setContent] = useState<ResumeContent | null>(null);
   const [genId, setGenId] = useState<number | null>(null);
@@ -309,7 +308,6 @@ function BuilderInner() {
           resume_id: Number(resumeId),
           jd_id: jdId ? Number(jdId) : null,
           page_count: pageCount,
-          include_github: includeGithub,
         },
       });
       const data = await pollJob<BuildResult>(job_id, (s, l) => {
@@ -491,11 +489,6 @@ function BuilderInner() {
             />
           </Field>
 
-          <div className="flex items-center gap-2 pb-2.5">
-            <Toggle id="gh-toggle" aria-label="Include GitHub projects" checked={includeGithub} onChange={setIncludeGithub} />
-            <label htmlFor="gh-toggle" className="text-[13px] text-ink-soft">GitHub</label>
-          </div>
-
           <Button onClick={generate} loading={generating} disabled={loading || !hasResume}>
             {generating ? "Generating..." : content ? "Regenerate" : "Generate"}
           </Button>
@@ -541,7 +534,7 @@ function BuilderInner() {
             </span>
           )}
           <span className="ml-auto text-xs text-ink-faint">
-            Resume is the source of truth. GitHub and LinkedIn only enrich.
+            Sharpened with your GitHub and LinkedIn, truthfully.
           </span>
         </div>
 

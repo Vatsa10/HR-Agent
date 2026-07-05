@@ -567,14 +567,15 @@ async def api_jds(request: Request):
 
 # ---------------- resume builder ----------------
 
-def _run_build(job_id, user, resume_id, jd_id, jd_text, parsed, page_count=1, include_github=False):
-    """Background: optional GitHub + LinkedIn enrichment + LLM rewrite. GitHub is
-    opt-in (slow repo walk), so the default fast path skips it and reuses the
-    stored jd_match plus saved context."""
+def _run_build(job_id, user, resume_id, jd_id, jd_text, parsed, page_count=1):
+    """Background: GitHub + LinkedIn enrichment + LLM rewrite. Both are always
+    folded in (when the user has them set) to sharpen the resume, alongside the
+    stored jd_match and saved context. Enrichment is truthful: it surfaces
+    provable material, never invents."""
     job = JOBS[job_id]
     try:
         github_data = None
-        if include_github and user.get("github_url"):
+        if user.get("github_url"):
             try:
                 job["stage"] = "github"
                 from github import fetch_and_display_github_info
@@ -647,7 +648,6 @@ async def api_build(request: Request):
     resume_id = body.get("resume_id")
     jd_id = body.get("jd_id")
     page_count = 2 if int(body.get("page_count") or 1) == 2 else 1
-    include_github = bool(body.get("include_github"))
     resume_row = db.get_resume(resume_id, user["id"]) if resume_id else None
     if not resume_row:
         return JSONResponse({"error": "resume not found"}, status_code=404)
@@ -662,7 +662,7 @@ async def api_build(request: Request):
     JOBS[job_id] = {"status": "running", "stage": "build"}
     threading.Thread(
         target=_run_build,
-        args=(job_id, user, resume_id, jd_id, jd_text, resume_row["parsed"] or {}, page_count, include_github),
+        args=(job_id, user, resume_id, jd_id, jd_text, resume_row["parsed"] or {}, page_count),
         daemon=True,
     ).start()
     return {"job_id": job_id}
