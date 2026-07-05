@@ -27,12 +27,15 @@ try:
     # so most are fresh. We deliberately do NOT use check= on checkout: it runs
     # a SELECT 1 every query, an extra ~network round-trip that hurts latency.
     # The rare dead connection is handled by the retry-once wrapper below.
+    # min_size 4 keeps enough warm connections for the concurrent bootstrap
+    # queries so they reuse live connections instead of opening (handshaking)
+    # new ones on the hot path.
     _pool = ConnectionPool(
         DATABASE_URL,
-        min_size=1,
-        max_size=5,
+        min_size=4,
+        max_size=10,
         open=True,
-        max_idle=60.0,
+        max_idle=120.0,
         max_lifetime=600.0,
     )
 

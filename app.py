@@ -7,6 +7,7 @@ GET  /api/jobs/{id} -> current stage + result when finished
 Plus auth, profile, history, and resume-builder routes backed by db.py.
 """
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -208,25 +209,35 @@ async def api_bootstrap(request: Request):
     user = current_user(request)
     if not user:
         return _unauth()
-    out = {
+    uid = user["id"]
+
+    # Run the independent queries CONCURRENTLY (each is a ~network round-trip to
+    # a remote DB; sequential would be 4x slower). asyncio.to_thread hands each
+    # blocking query to a worker thread; the pool supplies separate connections.
+    async def q(fn, default):
+        try:
+            return await asyncio.to_thread(fn)
+        except Exception:
+            logger.exception("bootstrap query failed")
+            return default
+
+    resumes, jds, prefs, generated = await asyncio.gather(
+        q(lambda: db.list_resumes(uid), []),
+        q(lambda: db.list_jds(uid), []),
+        q(lambda: db.get_job_prefs(uid), {}),
+        q(lambda: db.list_generated(uid), []),
+    )
+    return {
         "me": {
             "email": user["email"],
             "github_url": user.get("github_url"),
             "extras": user.get("extras") or {},
-        }
+        },
+        "resumes": resumes,
+        "jds": jds,
+        "prefs": prefs,
+        "generated": generated,
     }
-    for key, fn in (
-        ("resumes", lambda: db.list_resumes(user["id"])),
-        ("jds", lambda: db.list_jds(user["id"])),
-        ("prefs", lambda: db.get_job_prefs(user["id"])),
-        ("generated", lambda: db.list_generated(user["id"])),
-    ):
-        try:
-            out[key] = fn()
-        except Exception:
-            logger.exception("bootstrap %s failed", key)
-            out[key] = {} if key == "prefs" else []
-    return out
 
 
 @app.get("/api/me")
