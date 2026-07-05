@@ -217,12 +217,13 @@ async def api_bootstrap(request: Request):
         ("resumes", lambda: db.list_resumes(user["id"])),
         ("jds", lambda: db.list_jds(user["id"])),
         ("prefs", lambda: db.get_job_prefs(user["id"])),
+        ("generated", lambda: db.list_generated(user["id"])),
     ):
         try:
             out[key] = fn()
         except Exception:
             logger.exception("bootstrap %s failed", key)
-            out[key] = [] if key != "prefs" else {}
+            out[key] = {} if key == "prefs" else []
     return out
 
 
@@ -548,6 +549,15 @@ async def api_build(request: Request):
         daemon=True,
     ).start()
     return {"job_id": job_id}
+
+
+@app.get("/api/generated")
+async def api_generated_list(request: Request):
+    """List the user's saved (previously built) resumes, newest first."""
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    return db.list_generated(user["id"])
 
 
 @app.get("/api/generated/{gen_id}")

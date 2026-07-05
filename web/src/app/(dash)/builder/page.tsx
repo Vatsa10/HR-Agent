@@ -23,6 +23,11 @@ interface JdRow {
   snippet?: string | null;
   created_at?: string;
 }
+interface GeneratedRow {
+  id: number;
+  created_at?: string;
+  candidate?: string | null;
+}
 
 type Loc = { city?: string | null } | null | undefined;
 
@@ -194,6 +199,8 @@ function BuilderInner() {
   const [linkedinResumeId, setLinkedinResumeId] = useState("");
   const [blocks, setBlocks] = useState<ExtraBlock[]>([]);
   const [ctxSave, setCtxSave] = useState("Save context");
+  const [ctxOpen, setCtxOpen] = useState(false);
+  const [generated, setGenerated] = useState<GeneratedRow[]>([]);
 
   const linkedinResumes = resumes.filter((r) => (r.filename || "").startsWith("LinkedIn:"));
   // The main resume picker is for actual resumes only; imported LinkedIn
@@ -209,6 +216,7 @@ function BuilderInner() {
         const boot = await api<{
           resumes: ResumeRow[];
           jds: JdRow[];
+          generated: GeneratedRow[];
           me: { github_url?: string; extras?: Record<string, unknown> };
         }>("/bootstrap");
         if (!alive) return;
@@ -217,6 +225,7 @@ function BuilderInner() {
         const me = boot.me || {};
         setResumes(r);
         setJds(j);
+        setGenerated(boot.generated || []);
         const qResume = searchParams.get("resume");
         const qJd = searchParams.get("jd");
         const pick = r.filter((x) => !(x.filename || "").startsWith("LinkedIn:"));
@@ -370,6 +379,31 @@ function BuilderInner() {
     URL.revokeObjectURL(a.href);
   }
 
+  // Browser-native PDF: print-to-PDF against the print stylesheet, which shows
+  // only the resume sheet at A4. No server dependency.
+  function downloadPdf() {
+    window.print();
+  }
+
+  async function openSaved(id: string) {
+    if (!id) return;
+    setError(null);
+    try {
+      const data = await api<{ id: number; content: ResumeContent; markdown: string }>(
+        `/generated/${id}`,
+      );
+      if (!mounted.current) return;
+      setGenId(data.id);
+      const pc = data.content?._page_count;
+      if (pc === 1 || pc === 2) setPageCount(pc);
+      setContent(data.content);
+      setMarkdown(data.markdown || "");
+      setNotes(data.content?._tailoring_notes || []);
+    } catch (e) {
+      if (mounted.current && e instanceof Error && e.message !== "unauthorized") setError(e.message);
+    }
+  }
+
   const hasResume = pickResumes.length > 0;
 
   return (
@@ -412,262 +446,179 @@ function BuilderInner() {
         </p>
       </header>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
-        {/* ---------------- Left rail: generate controls ---------------- */}
-        <aside className="space-y-5 print:hidden lg:sticky lg:top-6 lg:self-start">
-          <Card className="space-y-4">
-            <div>
-              <h2 className="text-sm font-semibold text-ink">Generate</h2>
-              <p className="mt-1 text-xs text-ink-faint">
-                Your resume is the main content. GitHub and LinkedIn below are secondary
-                context, used to enrich and fill gaps, never to replace facts.
-              </p>
-            </div>
-
-            <Field
-              label="Resume"
-              htmlFor="resume-sel"
-              hint={loading ? "loading" : !hasResume ? "none yet" : undefined}
-            >
+      {/* ---------------- Control bar: pick + generate, all inline ---------------- */}
+      <Card className="mb-5 print:hidden">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[180px] flex-1">
+            <Field label="Resume" htmlFor="resume-sel" hint={loading ? "loading" : !hasResume ? "none yet" : undefined}>
               {loading ? (
                 <Skeleton className="h-10 w-full" />
               ) : (
-                <Select
-                  id="resume-sel"
-                  value={resumeId}
-                  onChange={(e) => setResumeId(e.target.value)}
-                  disabled={!hasResume}
-                >
+                <Select id="resume-sel" value={resumeId} onChange={(e) => setResumeId(e.target.value)} disabled={!hasResume}>
                   {hasResume ? (
                     pickResumes.map((r) => (
-                      <option key={r.id} value={r.id}>
-                        {r.filename}
-                      </option>
+                      <option key={r.id} value={r.id}>{r.filename}</option>
                     ))
                   ) : (
                     <option value="">No resumes yet</option>
                   )}
                 </Select>
               )}
-              {!hasResume && !loading && (
-                <p className="text-xs text-ink-faint">
-                  No resumes yet.{" "}
-                  <Link href="/analyze" className="text-blue hover:underline">
-                    Run an analysis first
-                  </Link>
-                  .
-                </p>
-              )}
             </Field>
+          </div>
 
+          <div className="min-w-[180px] flex-1">
             <Field label="Job description" htmlFor="jd-sel" hint="optional">
               {loading ? (
                 <Skeleton className="h-10 w-full" />
               ) : (
-                <Select
-                  id="jd-sel"
-                  value={jdId}
-                  onChange={(e) => setJdId(e.target.value)}
-                >
+                <Select id="jd-sel" value={jdId} onChange={(e) => setJdId(e.target.value)}>
                   <option value="">None (general polish)</option>
                   {jds.map((j) => (
-                    <option key={j.id} value={j.id}>
-                      {j.source_url || j.snippet || `JD #${j.id}`}
-                    </option>
+                    <option key={j.id} value={j.id}>{j.source_url || j.snippet || `JD #${j.id}`}</option>
                   ))}
                 </Select>
               )}
             </Field>
+          </div>
 
-            <Field label="Page length">
-              <Segmented<1 | 2>
-                aria-label="Page length"
-                value={pageCount}
-                onChange={setPageCount}
-                options={[
-                  { value: 1, label: "1 page" },
-                  { value: 2, label: "2 pages" },
-                ]}
-              />
-            </Field>
+          <Field label="Length">
+            <Segmented<1 | 2>
+              aria-label="Page length"
+              value={pageCount}
+              onChange={setPageCount}
+              options={[{ value: 1, label: "1 page" }, { value: 2, label: "2 pages" }]}
+            />
+          </Field>
 
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <label htmlFor="gh-toggle" className="text-sm font-medium text-ink">
-                  Include GitHub projects
-                </label>
-                <p className="mt-0.5 text-xs text-ink-faint">
-                  Slower, walks your repositories. Off uses your resume, JD match, and saved context.
-                </p>
-              </div>
-              <Toggle
-                id="gh-toggle"
-                aria-label="Include GitHub projects"
-                checked={includeGithub}
-                onChange={setIncludeGithub}
-                className="mt-0.5"
-              />
-            </div>
+          <div className="flex items-center gap-2 pb-2.5">
+            <Toggle id="gh-toggle" aria-label="Include GitHub projects" checked={includeGithub} onChange={setIncludeGithub} />
+            <label htmlFor="gh-toggle" className="text-[13px] text-ink-soft">GitHub</label>
+          </div>
 
-            <Button
-              onClick={generate}
-              loading={generating}
-              disabled={loading || !hasResume}
-              className="w-full"
-            >
-              {generating ? "Generating..." : content ? "Regenerate" : "Generate resume"}
-            </Button>
-            {generating && genStage ? (
-              <p className="flex items-center gap-1.5 text-xs text-ink-soft" aria-live="polite">
-                <span aria-hidden className="inline-block size-1.5 animate-pulse rounded-full bg-blue" />
-                {genStage}
-              </p>
-            ) : (
-              <p className="text-xs text-ink-faint">
-                The builder rewrites your parsed resume with impact-first bullets, tuned to the JD if
-                one is selected.
-              </p>
-            )}
+          <Button onClick={generate} loading={generating} disabled={loading || !hasResume}>
+            {generating ? "Generating..." : content ? "Regenerate" : "Generate"}
+          </Button>
+        </div>
 
-            {error && <ErrorInline>{error}</ErrorInline>}
-          </Card>
-
-          {/* ---------------- Context (secondary) ---------------- */}
-          <Card className="space-y-4">
-            <div>
-              <h2 className="text-sm font-semibold text-ink">Context</h2>
-              <p className="mt-1 text-xs text-ink-faint">
-                Secondary material the builder folds in. Also editable in Settings.
-              </p>
-            </div>
-
-            <Field label="GitHub URL" hint="secondary" htmlFor="gh">
-              <Input
-                id="gh"
-                type="url"
-                placeholder="https://github.com/you"
-                value={github}
-                onChange={(e) => setGithub(e.target.value)}
-              />
-            </Field>
-
-            <Field label="LinkedIn profile" hint="secondary" htmlFor="li-sel">
+        {/* second row: reopen a saved build, edit context, live stage */}
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line pt-3">
+          {generated.length > 0 && (
+            <label className="flex items-center gap-2 text-[13px] text-ink-soft">
+              Open saved
               <Select
-                id="li-sel"
-                value={linkedinResumeId}
-                onChange={(e) => setLinkedinResumeId(e.target.value)}
+                className="h-8 w-auto min-w-[160px] text-[13px]"
+                value=""
+                onChange={(e) => openSaved(e.target.value)}
               >
-                <option value="">None</option>
-                {linkedinResumes.map((r) => (
-                  <option key={r.id} value={r.id}>
-                    {r.filename}
+                <option value="">Choose a build...</option>
+                {generated.map((g) => (
+                  <option key={g.id} value={g.id}>
+                    {(g.candidate || "Resume")}{g.created_at ? ` · ${new Date(g.created_at).toLocaleDateString()}` : ""}
                   </option>
                 ))}
               </Select>
-              <p className="text-xs text-ink-faint">
-                Pick an imported profile (instant), or paste a URL to fetch live.{" "}
-                <Link href="/linkedin" className="text-blue hover:underline">
-                  Import one
-                </Link>
-                .
-              </p>
-              <Input
-                type="url"
-                placeholder="or https://www.linkedin.com/in/you"
-                value={linkedinUrl}
-                onChange={(e) => setLinkedinUrl(e.target.value)}
-              />
-            </Field>
+            </label>
+          )}
+          <button
+            type="button"
+            onClick={() => setCtxOpen((v) => !v)}
+            aria-expanded={ctxOpen}
+            className="text-[13px] font-medium text-blue hover:underline"
+          >
+            {ctxOpen ? "Hide context" : "Edit context (GitHub, LinkedIn, extras)"}
+          </button>
+          {!hasResume && !loading && (
+            <span className="text-[13px] text-ink-faint">
+              No resumes yet.{" "}
+              <Link href="/analyze" className="text-blue hover:underline">Run an analysis first</Link>.
+            </span>
+          )}
+          {generating && genStage && (
+            <span className="flex items-center gap-1.5 text-[13px] text-ink-soft" aria-live="polite">
+              <span aria-hidden className="inline-block size-1.5 animate-pulse rounded-full bg-blue" />
+              {genStage}
+            </span>
+          )}
+          <span className="ml-auto text-xs text-ink-faint">
+            Resume is the source of truth. GitHub and LinkedIn only enrich.
+          </span>
+        </div>
 
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-ink-soft">Your content</span>
-                <button
-                  type="button"
-                  onClick={() => setBlocks((b) => [...b, { title: "", body: "" }])}
-                  className="text-xs font-medium text-blue hover:underline"
-                >
-                  Add block
-                </button>
-              </div>
-              <p className="text-xs text-ink-faint">
-                Certifications, publications, talks, anything not in the resume.
-              </p>
-              {blocks.map((blk, i) => (
-                <div key={i} className="space-y-1.5 rounded-lg border border-line bg-surface p-2.5">
-                  <div className="flex items-center gap-2">
-                    <Input
-                      className="h-8 text-[13px]"
-                      placeholder="Title (e.g. Certifications)"
-                      value={blk.title || ""}
-                      onChange={(e) =>
-                        setBlocks((bs) => bs.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))
-                      }
-                    />
-                    <button
-                      type="button"
-                      aria-label="Remove block"
-                      onClick={() => setBlocks((bs) => bs.filter((_, j) => j !== i))}
-                      className="text-ink-faint hover:text-bad"
-                    >
-                      ×
-                    </button>
-                  </div>
-                  <Textarea
-                    rows={3}
-                    className="text-[13px]"
-                    placeholder="Body text. One item per line works well."
-                    value={blk.body || ""}
-                    onChange={(e) =>
-                      setBlocks((bs) => bs.map((x, j) => (j === i ? { ...x, body: e.target.value } : x)))
-                    }
-                  />
+        {/* collapsible context (grid-rows transition, not height) */}
+        <div
+          className="grid transition-[grid-template-rows] duration-300 [transition-timing-function:var(--ease)]"
+          style={{ gridTemplateRows: ctxOpen ? "1fr" : "0fr" }}
+        >
+          <div className="overflow-hidden">
+            <div className="mt-3 grid gap-4 border-t border-line pt-4 sm:grid-cols-2">
+              <Field label="GitHub URL" hint="secondary" htmlFor="gh">
+                <Input id="gh" type="url" placeholder="https://github.com/you" value={github} onChange={(e) => setGithub(e.target.value)} />
+              </Field>
+              <Field label="LinkedIn profile" hint="secondary" htmlFor="li-sel">
+                <Select id="li-sel" value={linkedinResumeId} onChange={(e) => setLinkedinResumeId(e.target.value)}>
+                  <option value="">None</option>
+                  {linkedinResumes.map((r) => (
+                    <option key={r.id} value={r.id}>{r.filename}</option>
+                  ))}
+                </Select>
+                <Input type="url" className="mt-1.5" placeholder="or https://www.linkedin.com/in/you" value={linkedinUrl} onChange={(e) => setLinkedinUrl(e.target.value)} />
+              </Field>
+              <div className="sm:col-span-2 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-medium text-ink-soft">Your content (certifications, publications, anything extra)</span>
+                  <button type="button" onClick={() => setBlocks((b) => [...b, { title: "", body: "" }])} className="text-xs font-medium text-blue hover:underline">
+                    Add block
+                  </button>
                 </div>
-              ))}
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {blocks.map((blk, i) => (
+                    <div key={i} className="space-y-1.5 rounded-lg border border-line bg-surface p-2.5">
+                      <div className="flex items-center gap-2">
+                        <Input className="h-8 text-[13px]" placeholder="Title" value={blk.title || ""} onChange={(e) => setBlocks((bs) => bs.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))} />
+                        <button type="button" aria-label="Remove block" onClick={() => setBlocks((bs) => bs.filter((_, j) => j !== i))} className="text-ink-faint hover:text-bad">×</button>
+                      </div>
+                      <Textarea rows={2} className="text-[13px]" placeholder="Body. One item per line." value={blk.body || ""} onChange={(e) => setBlocks((bs) => bs.map((x, j) => (j === i ? { ...x, body: e.target.value } : x)))} />
+                    </div>
+                  ))}
+                </div>
+                <Button variant="ghost" size="sm" onClick={saveContext}>{ctxSave}</Button>
+              </div>
             </div>
+          </div>
+        </div>
 
-            <Button variant="ghost" size="sm" onClick={saveContext} className="w-full">
-              {ctxSave}
-            </Button>
-          </Card>
+        {error && <div className="mt-3"><ErrorInline>{error}</ErrorInline></div>}
+      </Card>
 
-          {notes.length > 0 && (
-            <Card className="space-y-2">
-              <h3 className="text-sm font-semibold text-ink">What changed</h3>
-              <ul className="space-y-1.5">
-                {notes.map((n, i) => (
-                  <li key={i} className="flex gap-2 text-xs text-ink-soft">
-                    <span aria-hidden className="mt-0.5 text-blue">
-                      +
-                    </span>
-                    <span>{n}</span>
-                  </li>
-                ))}
-              </ul>
-            </Card>
-          )}
-        </aside>
+      {/* ---------------- What changed (tailoring notes) ---------------- */}
+      {notes.length > 0 && (
+        <div className="mb-5 rounded-xl border border-line bg-blue-soft/40 p-4 print:hidden">
+          <h3 className="text-sm font-semibold text-ink">What changed</h3>
+          <ul className="mt-1.5 grid gap-1.5 sm:grid-cols-2">
+            {notes.map((n, i) => (
+              <li key={i} className="flex gap-2 text-xs text-ink-soft">
+                <span aria-hidden className="mt-0.5 text-blue">+</span>
+                <span>{n}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
-        {/* ---------------- Main: editable resume sheet ---------------- */}
-        <section className="space-y-4">
-          {content && (
-            <div className="flex flex-wrap items-center gap-2 print:hidden">
-              <Button variant="ghost" size="sm" onClick={addSection}>
-                Add custom section
-              </Button>
-              <Button variant="ghost" size="sm" onClick={save}>
-                {saveLabel}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={downloadMd}>
-                Download Markdown
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => window.print()}>
-                Print / Save as PDF
-              </Button>
-            </div>
-          )}
+      {/* ---------------- The resume sheet (hero) with sticky toolbar ---------------- */}
+      <section className="space-y-3">
+        {content && (
+          <div className="sticky top-3 z-10 mx-auto flex w-full max-w-[820px] flex-wrap items-center gap-2 rounded-xl border border-line bg-paper/85 px-2 py-2 shadow-sm backdrop-blur print:hidden">
+            <Button size="sm" onClick={save}>{saveLabel}</Button>
+            <Button variant="ghost" size="sm" onClick={downloadPdf}>Download PDF</Button>
+            <Button variant="ghost" size="sm" onClick={downloadMd}>Markdown</Button>
+            <Button variant="ghost" size="sm" onClick={addSection}>Add section</Button>
+            <span className="ml-auto pr-1 text-xs text-ink-faint">Click any line to edit</span>
+          </div>
+        )}
 
-          {loading ? (
+        {loading ? (
             <div
               className="mx-auto w-full max-w-[820px] space-y-4 rounded-xl border border-line bg-paper p-8 shadow-sm md:p-12"
               aria-busy="true"
@@ -697,8 +648,8 @@ function BuilderInner() {
             >
               <p className="text-sm font-medium text-ink">Nothing built yet</p>
               <p className="max-w-sm text-sm text-ink-faint">
-                Pick a resume on the left and hit Generate to build a polished version here. Then
-                click any text to edit it.
+                Pick a resume above and hit Generate to build a polished version here, or open a
+                saved build. Then click any line to edit it.
               </p>
             </Card>
           ) : (
@@ -714,7 +665,6 @@ function BuilderInner() {
             />
           )}
         </section>
-      </div>
     </div>
   );
 }

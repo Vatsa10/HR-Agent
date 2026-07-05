@@ -331,7 +331,9 @@ def save_generated(user_id, resume_id, jd_id, content, markdown):
 
 def list_generated(user_id):
     return _all(
-        "SELECT id, resume_id, jd_id, created_at FROM generated_resumes WHERE user_id = %s ORDER BY created_at DESC",
+        "SELECT id, resume_id, jd_id, created_at, "
+        "content->'basics'->>'name' AS candidate "
+        "FROM generated_resumes WHERE user_id = %s ORDER BY created_at DESC",
         (user_id,),
     )
 
