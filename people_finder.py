@@ -10,7 +10,6 @@ Best-effort: search() always returns {query_understood, people}; people is []
 on any failure but the parsed intent is always included.
 """
 
-import concurrent.futures
 import json
 import logging
 
@@ -95,18 +94,51 @@ def _norm(name):
     return " ".join((name or "").lower().split())
 
 
+# linkedin_service returns the blob under different section keys: people search
+# uses "search_results", company_employees uses "employees". Read whichever is
+# present (this was the bug: company results, keyed "employees", were dropped).
+def _first(d):
+    if not isinstance(d, dict):
+        return None
+    for k in ("search_results", "employees"):
+        if d.get(k):
+            return d[k]
+    for v in d.values():
+        if v:
+            return v
+    return None
+
+
 def _sections_text(res):
     """Pull the results text blob out of a linkedin_service result dict."""
     if not isinstance(res, dict):
         return ""
-    return (res.get("sections") or {}).get("search_results") or ""
+    return _first(res.get("sections")) or ""
 
 
 def _refs(res):
     """Pull the references list out of a linkedin_service result dict."""
     if not isinstance(res, dict):
         return []
-    return (res.get("references") or {}).get("search_results") or []
+    return _first(res.get("references")) or []
+
+
+# A recruiter is broader than the literal word: HR, talent acquisition, people,
+# HRBP, recruitment, staffing, chief of staff / founder's office (they hire).
+_RECRUITER_TERMS = (
+    "recruit", "talent acquisition", "talent partner", "talent ", "hrbp",
+    "human resources", "hr executive", "hr manager", "hr operations",
+    "hr business partner", "people ops", "people operations", "people strategy",
+    "people & culture", "people and culture", "hiring", "sourcer", "staffing",
+    "chief of staff", "founder's office", "founders office", "founder’s office",
+    " hr ", "hr |", "| hr", "hr,",
+)
+
+
+def _is_recruiter(headline):
+    """True if the headline reads as a hiring/recruiting/people role."""
+    h = f" {(headline or '').lower()} "
+    return any(t in h for t in _RECRUITER_TERMS)
 
 
 def parse_query(nl_query):
@@ -220,59 +252,61 @@ def _build_query(parsed):
     return " ".join(p.strip() for p in parts if p and p.strip()).strip()
 
 
-def _fetch_and_parse(source_fn):
-    """Run one LinkedIn source (scrape) then parse its blob into people."""
-    res = source_fn()
-    return parse_people_blob(_sections_text(res), _refs(res))
+def _role_filter(people):
+    """Keep only hiring/recruiter-type people (by headline). If none match
+    (e.g. headlines were sparse), return the original list rather than nothing."""
+    kept = [p for p in people if _is_recruiter(p.get("headline"))]
+    return kept if kept else people
 
 
 def search(nl_query):
-    """Parse the query then run LinkedIn people search(es) CONCURRENTLY.
+    """Parse the query then find people, favouring accuracy.
 
-    When a company is named we run TWO sources in parallel (via the warm
-    browser's page pool): that company's employee directory (keyword-biased to
-    the role, far more accurate for "recruiters AT <company>") and a free
-    people search. They run on separate threads so the wall-clock is one
-    scrape, not two. Results merge company-directory-first, deduped by profile.
-    Without a company, just the free search.
+    When a company is named we query that company's CURRENT employee directory
+    (`/company/<name>/people/`, keyword-biased to the hiring role). That returns
+    people who work there now, not ex-employees, and is far more accurate than a
+    free search. Only if that yields nothing do we fall back to a free people
+    search. Results are then filtered to actual hiring roles (HR, talent
+    acquisition, HRBP, people, recruitment, chief of staff).
 
     Returns {query_understood, people: [{name, headline, company, location,
-    profile_url}]}. Best-effort: people is [] on total failure.
+    profile_url}]}.
     """
     parsed = parse_query(nl_query)
-    query = _build_query(parsed) or (nl_query or "").strip()
     company = parsed.get("company") or ""
     location = parsed.get("location") or None
+    # Keyword bias for the company /people/ page: a hiring term.
+    kw = parsed.get("role") or parsed.get("keywords") or "recruiter"
+    if not _is_recruiter(kw):
+        kw = f"{kw} recruiter"
 
-    # Build the source tasks (labelled so we can merge in priority order).
-    tasks = []
+    people = []
     if company:
-        kw = parsed.get("role") or parsed.get("keywords") or "recruiter"
-        tasks.append(("company", lambda: linkedin_service.company_employees(company, keywords=kw)))
-    if query:
-        tasks.append(("search", lambda: linkedin_service.search_people(query, location=location)))
+        try:
+            res = linkedin_service.company_employees(company, keywords=kw)
+            people = _fetch_parse_result(res)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("company_employees failed for %s: %s", company, e)
+            people = []
 
-    results = {}
-    if tasks:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=len(tasks)) as ex:
-            futs = {ex.submit(_fetch_and_parse, fn): label for label, fn in tasks}
-            for fut in concurrent.futures.as_completed(futs):
-                label = futs[fut]
-                try:
-                    results[label] = fut.result()
-                except Exception as e:  # noqa: BLE001
-                    logger.warning("%s people fetch failed: %s", label, e)
-                    results[label] = []
+    # Fall back to a free people search only if the company directory was empty
+    # (private company, no keyword match, etc.).
+    if not people:
+        query = _build_query(parsed) or (nl_query or "").strip()
+        if query:
+            try:
+                res = linkedin_service.search_people(query, location=location)
+                people = _fetch_parse_result(res)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("people search failed: %s", e)
+                people = []
 
-    # Merge: company directory first (more accurate), then free search; dedup.
-    merged, seen = [], set()
-    for label in ("company", "search"):
-        for p in results.get(label, []):
-            key = (p.get("profile_url") or p.get("name") or "").strip().lower()
-            if key and key not in seen:
-                seen.add(key)
-                merged.append(p)
-    return {"query_understood": parsed, "people": merged[:8]}
+    people = _role_filter(people)
+    return {"query_understood": parsed, "people": people[:8]}
+
+
+def _fetch_parse_result(res):
+    return parse_people_blob(_sections_text(res), _refs(res))
 
 
 if __name__ == "__main__":
@@ -378,9 +412,9 @@ if __name__ == "__main__":
         _self.parse_query = _orig_parse_query
         _self.parse_people_blob = _orig_ppb
     assert "query_understood" in result
-    # both sources run CONCURRENTLY when a company is named; results merge
-    # company-directory-first and dedup by profile url.
-    assert calls["company"] == 1 and calls["search"] == 1, calls
+    # company directory is used and yields people, so the free search is NOT
+    # run (accuracy over breadth); the recruiter headline passes the role filter.
+    assert calls["company"] == 1 and calls["search"] == 0, calls
     assert len(result["people"]) == 1 and result["people"][0]["company"] == "Google", result
 
     # ---- search(): no company -> free people search path ----
@@ -403,5 +437,21 @@ if __name__ == "__main__":
         _self.parse_people_blob = _orig_ppb
     assert calls["company"] == 0 and calls["search"] == 1, calls  # no company -> search path
     assert result2["people"][0]["name"] == "B", result2
+
+    # ---- section-key handling: company_employees uses "employees" not "search_results" ----
+    emp = {"sections": {"employees": "emp blob"}, "references": {"employees": [{"url": "/in/x/", "text": "X"}]}}
+    assert _self._sections_text(emp) == "emp blob", _self._sections_text(emp)
+    assert _self._refs(emp)[0]["text"] == "X"
+
+    # ---- recruiter role filter ----
+    assert _self._is_recruiter("Lead HR | HRBP | Recruitment")
+    assert _self._is_recruiter("Talent Acquisition Specialist")
+    assert _self._is_recruiter("Chief of Staff | People & Strategy")
+    assert not _self._is_recruiter("Software Engineer Intern | Front-End")
+    filtered = _self._role_filter([
+        {"headline": "Senior HR Executive"},
+        {"headline": "Backend Engineer"},
+    ])
+    assert len(filtered) == 1 and "HR" in filtered[0]["headline"], filtered
 
     print("people_finder self-check OK")
