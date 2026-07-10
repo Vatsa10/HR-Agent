@@ -137,6 +137,10 @@ CREATE TABLE IF NOT EXISTS hr_contacts (
     status text DEFAULT 'found',
     created_at timestamptz DEFAULT now()
 );
+-- Ship-now sprint additions (additive, safe on existing rows).
+ALTER TABLE resumes           ADD COLUMN IF NOT EXISTS deal_breakers jsonb;
+ALTER TABLE generated_resumes ADD COLUMN IF NOT EXISTS critique      jsonb;
+ALTER TABLE saved_jobs        ADD COLUMN IF NOT EXISTS scores        jsonb;
 """
 
 
