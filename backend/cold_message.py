@@ -6,6 +6,7 @@ referencing one real resume fact and the specific role/company.
 import json
 import logging
 
+import style_guardrails
 from llm_utils import initialize_llm_provider, extract_json_from_response
 from prompt import MODEL_PARAMETERS
 
@@ -59,9 +60,10 @@ def draft_message(resume_text, job_or_company, recruiter, tone="warm"):
             format="json",
         )
         obj = json.loads(extract_json_from_response(resp["message"]["content"]))
+        body, _ = style_guardrails.lint((obj.get("body") or "").strip())
         return {
             "subject": (obj.get("subject") or "").strip(),
-            "body": (obj.get("body") or "").strip(),
+            "body": body,
         }
     except Exception as e:  # noqa: BLE001
         logger.warning("draft_message failed: %s", e)

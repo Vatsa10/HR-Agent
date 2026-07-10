@@ -348,10 +348,12 @@ def get_analysis(analysis_id, user_id):
 
 # ---------------- generated resumes ----------------
 
-def save_generated(user_id, resume_id, jd_id, content, markdown):
+def save_generated(user_id, resume_id, jd_id, content, markdown, critique=None):
     row = _one(
-        "INSERT INTO generated_resumes (user_id, resume_id, jd_id, content, markdown) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-        (user_id, resume_id, jd_id, Jsonb(content), markdown),
+        "INSERT INTO generated_resumes (user_id, resume_id, jd_id, content, markdown, critique) "
+        "VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        (user_id, resume_id, jd_id, Jsonb(content), markdown,
+         Jsonb(critique) if critique else None),
     )
     return row["id"]
 
@@ -367,7 +369,7 @@ def list_generated(user_id):
 
 def get_generated(gen_id, user_id):
     return _one(
-        "SELECT id, content, markdown FROM generated_resumes WHERE id = %s AND user_id = %s",
+        "SELECT id, content, markdown, critique FROM generated_resumes WHERE id = %s AND user_id = %s",
         (gen_id, user_id),
     )
 

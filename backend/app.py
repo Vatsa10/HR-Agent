@@ -662,12 +662,18 @@ def _run_build(job_id, user, resume_id, jd_id, jd_text, parsed, page_count=1):
         tailoring_notes = built.get("tailoring_notes") or []
         if tailoring_notes:
             content["_tailoring_notes"] = tailoring_notes
-        gen_id = db.save_generated(user["id"], resume_id, jd_id, content, built["markdown"])
+        critique = built.get("critique") or {}
+        gen_id = db.save_generated(
+            user["id"], resume_id, jd_id, content, built["markdown"], critique=critique
+        )
         job["result"] = {
             "id": gen_id,
             "content": content,
             "markdown": built["markdown"],
             "tailoring_notes": tailoring_notes,
+            "critique": critique,
+            "ats_coverage": built.get("ats_coverage") or {"covered": [], "missing": []},
+            "style_removed": built.get("style_removed") or 0,
         }
         job["status"] = "done"
     except Exception as e:
