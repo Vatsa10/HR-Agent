@@ -28,6 +28,7 @@ import hr_finder
 import job_search
 import jd_matcher
 import people_finder
+import scoring
 from agents import build_graph
 from pdf import PDFHandler
 from resume_builder import build_resume, json_resume_to_markdown
@@ -861,7 +862,14 @@ def _run_job_search(job_id: str, keywords: str, location: str, user_id: int,
                 if s.get("reason"):
                     jobs[idx]["llm_reason"] = s.get("reason")
                     jobs[idx]["reason"] = s.get("reason")
-        jobs.sort(key=lambda j: j.get("score", 0) or 0, reverse=True)
+        # Verdict band + deterministic deal-breaker vetoes. A vetoed job is
+        # forced to the "excluded" band regardless of its score.
+        deal_breakers = db.get_deal_breakers(user_id)
+        for j in jobs:
+            veto = scoring.apply_vetoes(j, deal_breakers)
+            j["vetoed"] = veto == "FAIL"
+            j["band"] = "excluded" if j["vetoed"] else scoring.verdict_band(j.get("score", 0))
+        jobs.sort(key=lambda j: (not j["vetoed"], j.get("score", 0) or 0), reverse=True)
         job["result"] = {"jobs": jobs}
         job["status"] = "done"
     except Exception as e:
@@ -921,6 +929,28 @@ async def api_jobs_search_status(request: Request, job_id: str):
     if job["status"] == "error":
         payload["error"] = job.get("error")
     return payload
+
+
+@app.get("/api/jobs/deal-breakers")
+async def api_deal_breakers_get(request: Request):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    return {"deal_breakers": db.get_deal_breakers(user["id"]) or {"locations": [], "work_types": []}}
+
+
+@app.put("/api/jobs/deal-breakers")
+async def api_deal_breakers_put(request: Request):
+    user = current_user(request)
+    if not user:
+        return _unauth()
+    body = await request.json()
+    data = {
+        "locations": [s for s in (body.get("locations") or []) if str(s).strip()],
+        "work_types": [s for s in (body.get("work_types") or []) if str(s).strip()],
+    }
+    db.set_deal_breakers(user["id"], data)
+    return {"deal_breakers": data}
 
 
 # ---------------- saved jobs ----------------

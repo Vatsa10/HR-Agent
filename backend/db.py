@@ -263,6 +263,26 @@ def get_resume(resume_id, user_id):
     )
 
 
+def get_deal_breakers(user_id):
+    """Deal-breaker prefs {locations:[], work_types:[]} from the newest resume.
+    Returns None when none set (veto is then a no-op)."""
+    row = _one(
+        "SELECT deal_breakers FROM resumes WHERE user_id = %s AND deal_breakers IS NOT NULL "
+        "ORDER BY created_at DESC LIMIT 1",
+        (user_id,),
+    )
+    return row["deal_breakers"] if row else None
+
+
+def set_deal_breakers(user_id, data):
+    """Store deal-breaker prefs on the user's newest resume."""
+    _exec(
+        "UPDATE resumes SET deal_breakers = %s WHERE id = "
+        "(SELECT id FROM resumes WHERE user_id = %s ORDER BY created_at DESC LIMIT 1)",
+        (Jsonb(data), user_id),
+    )
+
+
 # ---------------- jds ----------------
 
 def save_jd(user_id, source_url, text):

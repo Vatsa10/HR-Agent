@@ -12,10 +12,19 @@ from typing import Optional
 import requests
 from pydantic import BaseModel, Field
 
+import scoring
 from llm_utils import initialize_llm_provider, extract_json_from_response
 from prompt import DEFAULT_MODEL, MODEL_PARAMETERS
 
 logger = logging.getLogger(__name__)
+
+
+class FitDimension(BaseModel):
+    """One scored dimension of candidate-job fit."""
+
+    name: str = Field(description="One of: technical, experience, behavioral, career")
+    score: float = Field(ge=0, le=100)
+    note: str = Field(default="", description="One-line justification")
 
 
 class RequirementCheck(BaseModel):
@@ -33,16 +42,32 @@ class RequirementCheck(BaseModel):
 
 
 class ATSKeywords(BaseModel):
-    """Keywords an ATS would scan for from the JD."""
+    """Keywords an ATS would scan for from the JD, in a 4-state taxonomy.
+
+    present   -> already in the resume.
+    absent    -> not in the resume (kept for backward compat = have_add + real_gap).
+    have_add  -> the candidate's real experience supports it, but it's not surfaced;
+                 truthfully add it.
+    real_gap  -> the candidate genuinely lacks it; a real skill gap.
+    """
 
     present: list[str] = Field(default_factory=list)
     absent: list[str] = Field(default_factory=list)
+    have_add: list[str] = Field(default_factory=list)
+    real_gap: list[str] = Field(default_factory=list)
 
 
 class JDMatchResult(BaseModel):
     """Result of matching a resume against a job description."""
 
     fit_score: float = Field(ge=0, le=100, description="Overall fit score 0-100")
+    dimensions: list[FitDimension] = Field(
+        default_factory=list,
+        description="Per-dimension fit scores (technical/experience/behavioral/career)",
+    )
+    band: str = Field(default="", description="shortlist | below | excluded (derived)")
+    strengths: list[str] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
     matching_skills: list[str] = Field(default_factory=list)
     missing_skills: list[str] = Field(
         default_factory=list, description="Missing MUST-HAVE requirements only"
@@ -111,10 +136,16 @@ First, understand the JD's own priorities. Classify every requirement:
 - MUST-HAVE: listed as required, essential, or clearly core to the role.
 - NICE-TO-HAVE: phrased as "bonus points", "nice to have", "preferred", "a plus", "good to know", or similar optional language.
 
+Score four fit dimensions, each 0-100, with a one-line note:
+- technical: coverage of the JD's required skills/tools/tech.
+- experience: depth and relevance of experience vs the role's seniority.
+- behavioral: soft skills / working-style signals the JD asks for.
+- career: how well the role aligns with the candidate's trajectory.
+Do NOT compute the overall yourself — an external system weights the dimensions.
+Still return fit_score as your best estimate; it will be recomputed.
+
 Scoring rules:
-- fit_score is driven by MUST-HAVE coverage and relevant experience depth (up to ~90 points).
-- Matched NICE-TO-HAVE items add a small boost (up to ~10 points total).
-- A missing NICE-TO-HAVE must NEVER reduce the score or appear in missing_skills.
+- A missing NICE-TO-HAVE must NEVER reduce a dimension or appear in missing_skills.
 - missing_skills lists ONLY unmet MUST-HAVE requirements.
 
 JOB DESCRIPTION:
@@ -126,6 +157,14 @@ CANDIDATE RESUME:
 Respond ONLY with valid JSON:
 {{
   "fit_score": <0-100 number>,
+  "dimensions": [
+    {{"name": "technical",  "score": <0-100>, "note": "<one line>"}},
+    {{"name": "experience", "score": <0-100>, "note": "<one line>"}},
+    {{"name": "behavioral", "score": <0-100>, "note": "<one line>"}},
+    {{"name": "career",     "score": <0-100>, "note": "<one line>"}}
+  ],
+  "strengths": ["<top reason this candidate fits>", ...],
+  "gaps": ["<top honest concern>", ...],
   "matching_skills": ["matched must-have skill", ...],
   "missing_skills": ["unmet must-have requirement", ...],
   "bonus_matched": ["matched nice-to-have/bonus item", ...],
@@ -143,7 +182,9 @@ Respond ONLY with valid JSON:
   ],
   "ats_keywords": {{
     "present": ["<JD keyword an ATS would scan for that appears in the resume>", ...],
-    "absent": ["<JD keyword an ATS would scan for that is NOT in the resume>", ...]
+    "absent": ["<every JD keyword NOT literally in the resume>", ...],
+    "have_add": ["<absent keyword the candidate's REAL experience truthfully supports but did not surface>", ...],
+    "real_gap": ["<absent keyword the candidate genuinely lacks>", ...]
   }}
 }}
 
@@ -155,7 +196,11 @@ Requirements list rules:
 
 ATS keyword rules:
 - ats_keywords are the concrete technologies, tools, certifications, and role terms an applicant tracking system would scan the JD for.
-- "present" means the exact or near-exact term appears in the resume; otherwise it goes in "absent"."""
+- "present" means the exact or near-exact term appears in the resume; otherwise it goes in "absent".
+- Every "absent" keyword must also appear in exactly ONE of have_add or real_gap.
+  have_add = truthfully supported by the candidate's real work but not spelled out;
+  real_gap = the candidate genuinely does not have it. NEVER put a keyword in
+  have_add unless the resume gives honest grounds for it."""
 
 
 def match_resume_to_jd(
@@ -184,7 +229,16 @@ def match_resume_to_jd(
         format=JDMatchResult.model_json_schema(),
     )
     raw = extract_json_from_response(response["message"]["content"])
-    return JDMatchResult(**json.loads(raw))
+    result = JDMatchResult(**json.loads(raw))
+
+    # Recompute the overall from the dimensions in pure Python so the fit number
+    # is auditable and deterministic (the LLM's fit_score is only a hint). Fall
+    # back to the LLM's fit_score when it returned no dimensions.
+    if result.dimensions:
+        dims = [{"name": d.name, "score": d.score} for d in result.dimensions]
+        result.fit_score = scoring.weighted_overall(dims)
+    result.band = scoring.verdict_band(result.fit_score)
+    return result
 
 
 if __name__ == "__main__":
@@ -194,4 +248,21 @@ if __name__ == "__main__":
     text = "\n".join(parser.parts)
     assert "Engineer" in text and "Python required" in text
     assert "bad()" not in text and "x{}" not in text
+
+    # model round-trips new fields; band/overall recompute logic (pure).
+    r = JDMatchResult(
+        fit_score=50,
+        dimensions=[
+            FitDimension(name="technical", score=90),
+            FitDimension(name="experience", score=80),
+            FitDimension(name="behavioral", score=60),
+            FitDimension(name="career", score=100),
+        ],
+        experience_match="x", verdict="strong_fit", summary="y",
+    )
+    dims = [{"name": d.name, "score": d.score} for d in r.dimensions]
+    assert scoring.weighted_overall(dims) == 86
+    assert scoring.verdict_band(86) == "shortlist"
+    k = ATSKeywords(absent=["k8s"], have_add=["k8s"])
+    assert k.have_add == ["k8s"] and k.real_gap == []
     print("jd_matcher self-check OK")
