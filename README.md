@@ -1,13 +1,3 @@
----
-title: Do Apply Backend
-emoji: 🚀
-colorFrom: blue
-colorTo: indigo
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # HR-Agent
 
 **AI hiring copilot.** A multi-agent pipeline that parses resume PDFs, enriches with GitHub signals, matches candidates against job postings (by URL or pasted text), and produces fair, explainable evaluations — with a clean web UI.
