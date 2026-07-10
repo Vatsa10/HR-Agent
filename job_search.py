@@ -8,7 +8,7 @@ import json
 import logging
 import re
 
-import linkedin_service
+import job_sources
 from llm_utils import initialize_llm_provider, extract_json_from_response
 from prompt import MODEL_PARAMETERS
 
@@ -43,28 +43,6 @@ def _abs_url(url):
     return _LI_BASE + ("" if url.startswith("/") else "/") + url
 
 
-SEARCH_PROMPT = """You are parsing LinkedIn job-search output into structured records.
-
-Below are three inputs:
-1. JOB_IDS: an ordered list of LinkedIn job ids.
-2. REFERENCES: an ordered list of {{url, text}} where text is usually the job title; order matches JOB_IDS.
-3. SEARCH_BLOB: a text dump that lists, per job in the same order, a title line, a "<title> with verification" line, a company line, and a location line (e.g. "Bengaluru, Karnataka, India (On-site)").
-
-Produce one record per job id, in order. Use the blob to recover company and location; use references/blob for the title. If a field is unknown use an empty string.
-
-JOB_IDS:
-{job_ids}
-
-REFERENCES:
-{references}
-
-SEARCH_BLOB:
-{blob}
-
-Respond ONLY with JSON of this shape:
-{{"jobs": [{{"li_job_id": "<id>", "title": "<title>", "company": "<company>", "location": "<location>"}}]}}"""
-
-
 def _keep_titled(rows):
     """Drop rows with an empty/whitespace title.
 
@@ -75,62 +53,31 @@ def _keep_titled(rows):
 
 
 def search(keywords, location=None, work_type=None, experience_level=None,
-           job_type=None, date_posted=None):
-    """Search LinkedIn jobs and parse into [{li_job_id, title, company, location, url}].
+           job_type=None, date_posted=None, limit=25):
+    """Search jobs across browser-free sources; return
+    [{li_job_id, title, company, location, url, posted, source}].
 
-    Optional filters (work_type/experience_level/job_type/date_posted) are
-    forwarded verbatim to linkedin_service.search_jobs; None means unfiltered.
-    Only real jobs are returned: rows with an empty title are dropped.
+    Sources (LinkedIn jobs-guest + freehire) run concurrently and are merged +
+    deduped. One source failing degrades gracefully to the other. No stealth
+    browser is used. experience_level/job_type are accepted for API
+    compatibility but not all sources filter on them.
     """
-    raw = linkedin_service.search_jobs(
-        keywords,
-        location=location,
-        work_type=work_type,
-        experience_level=experience_level,
-        job_type=job_type,
-        date_posted=date_posted,
-    )
-    refs = (raw.get("references") or {}).get("search_results") or []
-    job_ids = raw.get("job_ids") or []
-    blob = (raw.get("sections") or {}).get("search_results") or ""
-
-    # url lookup by index from references (url like '/jobs/view/<id>/')
-    ref_urls = [r.get("url", "") for r in refs]
-
-    try:
-        parsed = _llm_json(
-            "You extract structured job records. Respond only with JSON.",
-            SEARCH_PROMPT.format(
-                job_ids=json.dumps(job_ids[:25]),
-                references=json.dumps(
-                    [{"url": r.get("url", ""), "text": r.get("text", "")} for r in refs[:25]]
-                ),
-                blob=blob[:8000],
-            ),
+    remote = (work_type or "").lower() == "remote"
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        f_li = ex.submit(
+            job_sources.search_linkedin_guest, keywords,
+            location=location, work_type=work_type,
+            date_posted=date_posted, limit=limit,
         )
-        rows = parsed.get("jobs", []) if isinstance(parsed, dict) else []
-    except Exception as e:  # noqa: BLE001
-        logger.warning("job search parse failed: %s", e)
-        rows = []
+        f_fh = ex.submit(
+            job_sources.search_freehire, keywords,
+            location=location, remote=remote, limit=limit,
+        )
+        li_rows = f_li.result() or []
+        fh_rows = f_fh.result() or []
 
-    out = []
-    for i, row in enumerate(rows[:25]):
-        jid = str(row.get("li_job_id") or (job_ids[i] if i < len(job_ids) else "")).strip()
-        if not jid:
-            continue
-        url = ""
-        if i < len(ref_urls) and ref_urls[i]:
-            url = ref_urls[i]
-        elif jid:
-            url = f"/jobs/view/{jid}/"
-        out.append({
-            "li_job_id": jid,
-            "title": (row.get("title") or "").strip(),
-            "company": (row.get("company") or "").strip(),
-            "location": (row.get("location") or "").strip(),
-            "url": _abs_url(url),
-        })
-    return _keep_titled(out)
+    merged = job_sources.merge_dedup(li_rows, fh_rows)
+    return _keep_titled(merged)[:limit]
 
 
 _WORD = re.compile(r"[a-z0-9+#]+")

@@ -21,3 +21,4 @@ fastmcp>=3.0.0
 cryptography>=48.0.1
 inquirer>=3.4.0
 packaging>=23.0
+beautifulsoup4==4.12.3
