@@ -199,6 +199,13 @@ export default function SettingsPage() {
   const [prefsErr, setPrefsErr] = React.useState<string | null>(null);
   const [prefsFlash, flashPrefs] = useFlash();
 
+  // deal-breakers (comma-separated; hard vetoes on job search)
+  const [dbLocations, setDbLocations] = React.useState("");
+  const [dbWorkTypes, setDbWorkTypes] = React.useState("");
+  const [dbSaving, setDbSaving] = React.useState(false);
+  const [dbErr, setDbErr] = React.useState<string | null>(null);
+  const [dbFlash, flashDb] = useFlash();
+
   const handleAuth = React.useCallback(
     (e: unknown) => {
       if (e instanceof ApiError && e.status === 401) {
@@ -248,6 +255,17 @@ export default function SettingsPage() {
         setLocation(prefs.location || "");
         setSeniority(normalizeSeniority(prefs.seniority || ""));
         setWorkType(prefs.work_type || "");
+        try {
+          const db = await api<{ deal_breakers?: { locations?: string[]; work_types?: string[] } }>(
+            "/jobs/deal-breakers",
+          );
+          if (alive) {
+            setDbLocations((db.deal_breakers?.locations || []).join(", "));
+            setDbWorkTypes((db.deal_breakers?.work_types || []).join(", "));
+          }
+        } catch {
+          /* non-fatal: deal-breakers just stay empty */
+        }
       } catch (e) {
         if (!alive) return;
         if (!handleAuth(e)) {
@@ -319,6 +337,23 @@ export default function SettingsPage() {
       if (!handleAuth(e)) setPrefsErr(e instanceof Error ? e.message : "Failed to save.");
     } finally {
       setPrefsSaving(false);
+    }
+  }
+
+  async function saveDealBreakers() {
+    setDbErr(null);
+    setDbSaving(true);
+    const split = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
+    try {
+      await api("/jobs/deal-breakers", {
+        method: "PUT",
+        body: { locations: split(dbLocations), work_types: split(dbWorkTypes) },
+      });
+      flashDb();
+    } catch (e) {
+      if (!handleAuth(e)) setDbErr(e instanceof Error ? e.message : "Failed to save.");
+    } finally {
+      setDbSaving(false);
     }
   }
 
@@ -607,6 +642,49 @@ export default function SettingsPage() {
               </Field>
             </div>
           </div>
+          )}
+        </Section>
+
+        {/* Deal-breakers */}
+        <Section
+          title="Deal-breakers"
+          desc="Hard vetoes. Any job matching these is excluded from search results regardless of score."
+          footer={
+            <>
+              <SavedFlash show={dbFlash} />
+              <Button onClick={saveDealBreakers} loading={dbSaving} disabled={loading}>
+                Save deal-breakers
+              </Button>
+            </>
+          }
+        >
+          {loading ? (
+            <div className="grid gap-5 sm:grid-cols-2">
+              <FieldSkeleton />
+              <FieldSkeleton />
+            </div>
+          ) : (
+            <div className="flex flex-col gap-5">
+              {dbErr && <ErrorInline>{dbErr}</ErrorInline>}
+              <div className="grid gap-5 sm:grid-cols-2">
+                <Field label="Exclude locations" hint="comma-separated" htmlFor="db-locations">
+                  <Input
+                    id="db-locations"
+                    placeholder="Delhi, Noida..."
+                    value={dbLocations}
+                    onChange={(e) => setDbLocations(e.target.value)}
+                  />
+                </Field>
+                <Field label="Exclude work types" hint="comma-separated" htmlFor="db-worktypes">
+                  <Input
+                    id="db-worktypes"
+                    placeholder="on-site, hybrid..."
+                    value={dbWorkTypes}
+                    onChange={(e) => setDbWorkTypes(e.target.value)}
+                  />
+                </Field>
+              </div>
+            </div>
           )}
         </Section>
       </div>
