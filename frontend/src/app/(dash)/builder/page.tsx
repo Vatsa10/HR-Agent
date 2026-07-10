@@ -95,11 +95,28 @@ interface ResumeContent {
   [key: string]: unknown;
 }
 
+interface PerBullet {
+  text: string;
+  tag: "safe" | "stretch" | "fabrication" | string;
+  why?: string;
+}
+interface Critique {
+  edits?: { old: string; new: string; reason?: string }[];
+  per_bullet?: PerBullet[];
+  applied?: number;
+}
+interface AtsCoverage {
+  covered?: string[];
+  missing?: string[];
+}
 interface BuildResult {
   id: number;
   content: ResumeContent;
   markdown: string;
   tailoring_notes?: string[];
+  critique?: Critique;
+  ats_coverage?: AtsCoverage;
+  style_removed?: number;
 }
 
 /* ------------------------------------------------------------------ *
@@ -184,6 +201,9 @@ function BuilderInner() {
   const [genId, setGenId] = useState<number | null>(null);
   const [markdown, setMarkdown] = useState("");
   const [notes, setNotes] = useState<string[]>([]);
+  const [critique, setCritique] = useState<Critique | null>(null);
+  const [ats, setAts] = useState<AtsCoverage | null>(null);
+  const [styleRemoved, setStyleRemoved] = useState(0);
 
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -320,6 +340,9 @@ function BuilderInner() {
       setContent(data.content);
       setMarkdown(data.markdown || "");
       setNotes(data.tailoring_notes || data.content?._tailoring_notes || []);
+      setCritique(data.critique || null);
+      setAts(data.ats_coverage || null);
+      setStyleRemoved(data.style_removed || 0);
     } catch (e) {
       if (mounted.current && e instanceof Error && e.message !== "unauthorized") setError(e.message);
     } finally {
@@ -387,7 +410,7 @@ function BuilderInner() {
     if (!id) return;
     setError(null);
     try {
-      const data = await api<{ id: number; content: ResumeContent; markdown: string }>(
+      const data = await api<{ id: number; content: ResumeContent; markdown: string; critique?: Critique }>(
         `/generated/${id}`,
       );
       if (!mounted.current) return;
@@ -397,6 +420,9 @@ function BuilderInner() {
       setContent(data.content);
       setMarkdown(data.markdown || "");
       setNotes(data.content?._tailoring_notes || []);
+      setCritique(data.critique || null);
+      setAts(null);
+      setStyleRemoved(0);
     } catch (e) {
       if (mounted.current && e instanceof Error && e.message !== "unauthorized") setError(e.message);
     }
@@ -598,6 +624,60 @@ function BuilderInner() {
           </ul>
         </div>
       )}
+
+      {/* ---------------- Reviewer critique + ATS coverage ---------------- */}
+      {content && (critique?.per_bullet?.length || ats?.missing?.length || (critique?.applied ?? 0) > 0 || styleRemoved > 0) ? (
+        <div className="mb-5 grid gap-4 sm:grid-cols-2 print:hidden">
+          {(critique?.per_bullet?.length || (critique?.applied ?? 0) > 0 || styleRemoved > 0) && (
+            <div className="rounded-xl border border-line bg-surface p-4">
+              <h3 className="text-sm font-semibold text-ink">Reviewer pass</h3>
+              <p className="mt-1 text-xs text-ink-faint">
+                {(critique?.applied ?? 0)} edit{(critique?.applied ?? 0) === 1 ? "" : "s"} applied
+                {styleRemoved > 0 ? ` · ${styleRemoved} cliché${styleRemoved === 1 ? "" : "s"} removed` : ""}
+              </p>
+              {(() => {
+                const flags = (critique?.per_bullet || []).filter((b) => b.tag !== "safe");
+                if (!flags.length) return null;
+                return (
+                  <ul className="mt-2 space-y-1.5">
+                    {flags.map((b, i) => (
+                      <li key={i} className="text-xs text-ink-soft">
+                        <span
+                          className={cn(
+                            "mr-1.5 rounded px-1 py-0.5 text-[10px] font-semibold uppercase",
+                            b.tag === "fabrication" ? "bg-bad/10 text-bad" : "bg-blue-soft text-blue",
+                          )}
+                        >
+                          {b.tag}
+                        </span>
+                        {b.text}
+                        {b.why ? <span className="text-ink-faint"> — {b.why}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                );
+              })()}
+            </div>
+          )}
+          {ats && (ats.covered?.length || ats.missing?.length) ? (
+            <div className="rounded-xl border border-line bg-surface p-4">
+              <h3 className="text-sm font-semibold text-ink">ATS keyword coverage</h3>
+              <p className="mt-1 text-xs text-ink-faint">
+                {(ats.covered?.length || 0)} of {(ats.covered?.length || 0) + (ats.missing?.length || 0)} JD keywords present
+              </p>
+              {ats.missing?.length ? (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {ats.missing.map((k, i) => (
+                    <span key={i} className="rounded bg-bad/10 px-1.5 py-0.5 text-[11px] text-bad">{k}</span>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-xs text-good">All scanned keywords covered.</p>
+              )}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* ---------------- The resume sheet (hero) with sticky toolbar ---------------- */}
       <section className="space-y-3">

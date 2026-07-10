@@ -41,6 +41,8 @@ interface Job {
   heuristic_score?: number | null;
   llm_score?: number | null;
   llm_reason?: string | null;
+  band?: string | null;
+  vetoed?: boolean;
   seen?: boolean;
 }
 
@@ -291,11 +293,20 @@ function ResultCard({
         </p>
       </div>
 
-      {score != null && (
+      {(score != null || job.band) && (
         <div className="flex flex-wrap items-center gap-1.5">
-          <Badge tone={scoreTone(score)} mono title="Match score against your resume">
-            Match {Math.round(score)}
-          </Badge>
+          {score != null && (
+            <Badge tone={scoreTone(score)} mono title="Match score against your resume">
+              Match {Math.round(score)}
+            </Badge>
+          )}
+          {job.vetoed ? (
+            <Badge tone="bad" title="Excluded by a deal-breaker">Deal-breaker</Badge>
+          ) : job.band === "shortlist" ? (
+            <Badge tone="good">Shortlist</Badge>
+          ) : job.band === "excluded" ? (
+            <Badge tone="warn">Below bar</Badge>
+          ) : null}
         </div>
       )}
 

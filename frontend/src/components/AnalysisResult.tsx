@@ -32,8 +32,18 @@ export interface Requirement {
   suggestion?: string;
 }
 
+export interface FitDimension {
+  name: string;
+  score: number;
+  note?: string;
+}
+
 export interface JdMatch {
   fit_score: number;
+  band?: string;
+  dimensions?: FitDimension[];
+  strengths?: string[];
+  gaps?: string[];
   verdict?: string;
   summary?: string;
   experience_match?: string;
@@ -41,7 +51,7 @@ export interface JdMatch {
   missing_skills?: string[];
   bonus_matched?: string[];
   requirements?: Requirement[];
-  ats_keywords?: { present?: string[]; absent?: string[] };
+  ats_keywords?: { present?: string[]; absent?: string[]; have_add?: string[]; real_gap?: string[] };
 }
 
 export interface AnalysisResultData {
@@ -134,26 +144,87 @@ function Requirements({ reqs }: { reqs?: Requirement[] }) {
   );
 }
 
+function DimensionBars({ dims, band }: { dims?: FitDimension[]; band?: string }) {
+  if (!dims?.length) return null;
+  const bandTone: Tone =
+    band === "shortlist" ? "good" : band === "excluded" ? "bad" : "blue";
+  return (
+    <div className="space-y-2.5">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-medium uppercase tracking-wide text-ink-faint">Fit by dimension</p>
+        {band && <Badge tone={bandTone}>{band}</Badge>}
+      </div>
+      {dims.map((d, i) => {
+        const s = Math.max(0, Math.min(100, d.score));
+        const tone = s >= 70 ? "var(--good)" : s >= 45 ? "var(--blue)" : "var(--bad)";
+        return (
+          <div key={i} className="space-y-1">
+            <div className="flex items-baseline justify-between text-sm">
+              <span className="font-medium capitalize text-ink">{d.name}</span>
+              <span className="font-mono text-xs tabular-nums text-ink-soft">{s}</span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-surface-2">
+              <div className="h-full rounded-full" style={{ width: `${s}%`, background: tone }} />
+            </div>
+            {d.note && <p className="text-xs text-ink-faint">{d.note}</p>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function AtsKeywords({ ats }: { ats?: JdMatch["ats_keywords"] }) {
   const present = ats?.present || [];
+  // 4-state taxonomy: prefer have_add / real_gap when present, else fall back to absent.
+  const haveAdd = ats?.have_add || [];
+  const realGap = ats?.real_gap || [];
   const absent = ats?.absent || [];
-  if (!present.length && !absent.length) return null;
+  const showSplit = haveAdd.length > 0 || realGap.length > 0;
+  if (!present.length && !absent.length && !showSplit) return null;
   return (
     <div className="space-y-3">
       <SkillChips label="ATS keywords present" items={present} tone="good" />
-      {absent.length > 0 && (
-        <div>
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-faint">
-            Not found in the resume
-          </p>
-          <div className="flex flex-wrap gap-1.5">
-            {absent.map((s, i) => (
-              <Chip key={i} tone="bad">
-                {s}
-              </Chip>
-            ))}
+      {showSplit ? (
+        <>
+          {haveAdd.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-faint">
+                You have this — surface it truthfully
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {haveAdd.map((s, i) => (
+                  <Chip key={i} tone="blue">{s}</Chip>
+                ))}
+              </div>
+            </div>
+          )}
+          {realGap.length > 0 && (
+            <div>
+              <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-faint">
+                Genuine gaps
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {realGap.map((s, i) => (
+                  <Chip key={i} tone="bad">{s}</Chip>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        absent.length > 0 && (
+          <div>
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-ink-faint">
+              Not found in the resume
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {absent.map((s, i) => (
+                <Chip key={i} tone="bad">{s}</Chip>
+              ))}
+            </div>
           </div>
-        </div>
+        )
       )}
     </div>
   );
@@ -247,6 +318,14 @@ export function AnalysisResult({ data, className }: AnalysisResultProps) {
           {m.experience_match && (
             <p className="text-sm leading-relaxed text-ink-soft">{m.experience_match}</p>
           )}
+
+          <DimensionBars dims={m.dimensions} band={m.band} />
+          {(m.strengths?.length || m.gaps?.length) ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <SkillChips label="Strengths" items={m.strengths} tone="good" />
+              <SkillChips label="Honest gaps" items={m.gaps} tone="bad" />
+            </div>
+          ) : null}
 
           <Requirements reqs={m.requirements} />
           <SkillChips label="Matching skills" items={m.matching_skills} tone="good" />
