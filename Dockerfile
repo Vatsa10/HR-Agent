@@ -6,13 +6,14 @@ FROM mcr.microsoft.com/playwright/python:v1.55.0-jammy
 WORKDIR /app
 
 # Install Python deps first for layer caching.
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Patchright's own patched Chromium build.
 RUN python -m patchright install chromium
 
-COPY . .
+# Only the backend runs in the image; frontend is deployed separately (Vercel).
+COPY backend/ .
 
 # Writable caches for HF Spaces (HOME may be read-only otherwise).
 ENV LLM_PROVIDER=openai \

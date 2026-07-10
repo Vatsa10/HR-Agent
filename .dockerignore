@@ -1,4 +1,5 @@
-web/
+frontend/
+ai-job-search/
 venv/
 .venv/
 linkedin_scraper/
@@ -8,6 +9,7 @@ __pycache__/
 .git/
 cache/
 docs/
+scripts/
 *.pdf
 linkedin_session.json
 .env

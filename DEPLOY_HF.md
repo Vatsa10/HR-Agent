@@ -19,7 +19,7 @@ git push hf main
 HF sees the `Dockerfile` and builds it. The `README.md` frontmatter sets
 `sdk: docker` and `app_port: 7860`. First build is slow (Chromium download).
 
-The frontend (`web/`) is uploaded too but never built or run (the Dockerfile
+The frontend (`frontend/`) is uploaded too but never built or run (the Dockerfile
 ignores it via `.dockerignore`). Harmless.
 
 ## 2. Set Space secrets

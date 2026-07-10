@@ -54,6 +54,7 @@ Tables are created automatically on server startup. Register at `/login.html`, t
 ### Web UI
 
 ```bash
+cd backend
 python app.py
 # open http://127.0.0.1:8000
 ```
@@ -61,8 +62,8 @@ python app.py
 ### CLI
 
 ```bash
-# Score a resume
-python score.py path/to/resume.pdf
+# Score a resume (from backend/)
+cd backend && python score.py path/to/resume.pdf
 
 # Full multi-agent pipeline with JD matching
 python -c "from agents import run_pipeline; import json; s = run_pipeline('resume.pdf', jd_url='https://company.com/jobs/123'); print(s['jd_match'])"

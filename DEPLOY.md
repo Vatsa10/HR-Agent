@@ -65,7 +65,7 @@ limits than a home IP. If scraping degrades, that is the cause.
 
 ```bash
 # backend
-python app.py                 # http://127.0.0.1:8000
+cd backend && python app.py   # http://127.0.0.1:8000
 # frontend
 cd web && npm run dev         # http://localhost:3000  (proxies /api to :8000)
 ```
