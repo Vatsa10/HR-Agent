@@ -381,6 +381,18 @@ function SavedRowSkeleton() {
  * Page
  * ------------------------------------------------------------------ */
 
+// Session cache so results + filters survive navigation (e.g. Tailor -> back).
+const SEARCH_CACHE_KEY = "jobs:search";
+
+interface SearchCache {
+  results: Job[];
+  roles: string[];
+  location: string;
+  workType: string;
+  experience: string;
+  ts: number;
+}
+
 export default function JobsPage() {
   const alive = useRef(true);
   useEffect(() => {
@@ -411,7 +423,38 @@ export default function JobsPage() {
   // search
   const [searching, setSearching] = useState(false);
   const [searchStage, setSearchStage] = useState("");
+  const [searchError, setSearchError] = useState("");
   const [results, setResults] = useState<Job[] | null>(null);
+  const hydratedFromCache = useRef(false);
+
+  // Restore a previous search (results + filters) from this session, if any.
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(SEARCH_CACHE_KEY);
+      if (!raw) return;
+      const cache = JSON.parse(raw) as SearchCache;
+      if (!Array.isArray(cache.results)) return;
+      hydratedFromCache.current = true;
+      setResults(cache.results);
+      setRoles(Array.isArray(cache.roles) ? cache.roles : []);
+      setLocation(cache.location || "");
+      setWorkType(cache.workType || "");
+      setExperience(cache.experience || "");
+    } catch {
+      /* corrupt cache; ignore */
+    }
+  }, []);
+
+  // Keep the cache in sync with the latest search + filters.
+  useEffect(() => {
+    if (results === null) return;
+    try {
+      const cache: SearchCache = { results, roles, location, workType, experience, ts: Date.now() };
+      sessionStorage.setItem(SEARCH_CACHE_KEY, JSON.stringify(cache));
+    } catch {
+      /* quota; ignore */
+    }
+  }, [results, roles, location, workType, experience]);
 
   // saved
   const [saved, setSaved] = useState<SavedJob[] | null>(null);
@@ -444,11 +487,14 @@ export default function JobsPage() {
         if (!alive.current) return;
         const resumes = boot.resumes || [];
         if (resumes.length) setResumeId(resumes[0].id);
-        const p = boot.prefs || ({} as Prefs);
-        setRoles(Array.isArray(p.roles) ? p.roles : []);
-        setLocation(p.location || "");
-        setWorkType(p.work_type || "");
-        setExperience(seniorityToExperience(p.seniority || ""));
+        if (!hydratedFromCache.current) {
+          // Prefill filters from prefs only when no cached search restored them.
+          const p = boot.prefs || ({} as Prefs);
+          setRoles(Array.isArray(p.roles) ? p.roles : []);
+          setLocation(p.location || "");
+          setWorkType(p.work_type || "");
+          setExperience(seniorityToExperience(p.seniority || ""));
+        }
       } catch {
         /* ignore */
       }
@@ -459,6 +505,7 @@ export default function JobsPage() {
   const runSearch = async () => {
     setSearching(true);
     setResults(null);
+    setSearchError("");
     setSearchStage("Starting search...");
     try {
       const body: Record<string, string> = { keywords: roles.join(" ").trim() };
@@ -476,8 +523,9 @@ export default function JobsPage() {
       if (alive.current) setResults(res.jobs || []);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Search failed";
-      if (msg !== "unauthorized") flash(msg);
-      if (alive.current) setResults([]);
+      // Persistent error (until the next search); leave results alone so the
+      // misleading "No jobs found" empty state doesn't render.
+      if (msg !== "unauthorized" && alive.current) setSearchError(msg);
     } finally {
       if (alive.current) {
         setSearching(false);
@@ -613,6 +661,7 @@ export default function JobsPage() {
       </Card>
 
       {error && <ErrorInline>{error}</ErrorInline>}
+      {searchError && !searching && <ErrorInline>Search failed: {searchError}</ErrorInline>}
 
       {/* Search status / results */}
       {searching && (

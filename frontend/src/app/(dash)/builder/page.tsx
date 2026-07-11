@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { Suspense, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { api, pollJob } from "@/lib/api";
 import { Button, Card, Field, Input, Select, Textarea, Skeleton, ErrorInline, Segmented } from "@/components/ui";
@@ -181,9 +181,14 @@ export default function BuilderPage() {
 }
 
 function BuilderInner() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const sheetRef = useRef<HTMLDivElement>(null);
   const mounted = useRef(true);
+  // Unsaved in-place edits on the contentEditable sheet.
+  const dirty = useRef(false);
+  // Which ?gen= id is already loaded, so our own router.replace doesn't reload it.
+  const genLoaded = useRef<string | null>(null);
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -198,6 +203,9 @@ function BuilderInner() {
   const [pageCount, setPageCount] = useState<1 | 2>(1);
 
   const [content, setContent] = useState<ResumeContent | null>(null);
+  // Bumped whenever content is replaced programmatically so the contentEditable
+  // sheet remounts instead of React fighting user-mutated DOM.
+  const [epoch, setEpoch] = React.useState(0);
   const [genId, setGenId] = useState<number | null>(null);
   const [markdown, setMarkdown] = useState("");
   const [notes, setNotes] = useState<string[]>([]);
@@ -220,6 +228,26 @@ function BuilderInner() {
   const [ctxSave, setCtxSave] = useState("Save context");
   const [ctxOpen, setCtxOpen] = useState(false);
   const [generated, setGenerated] = useState<GeneratedRow[]>([]);
+
+  // Track in-place edits (contentEditable fires `input` on the sheet) and warn
+  // before the tab unloads with unsaved edits.
+  useEffect(() => {
+    const el = sheetRef.current;
+    if (!el) return;
+    const onInput = () => {
+      dirty.current = true;
+    };
+    el.addEventListener("input", onInput);
+    return () => el.removeEventListener("input", onInput);
+  }, [content, epoch]);
+
+  useEffect(() => {
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (dirty.current) e.preventDefault();
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, []);
 
   const linkedinResumes = resumes.filter((r) => (r.filename || "").startsWith("LinkedIn:"));
   // The main resume picker is for actual resumes only; imported LinkedIn
@@ -251,6 +279,9 @@ function BuilderInner() {
         if (qResume && r.some((x) => String(x.id) === qResume)) setResumeId(qResume);
         else if (pick.length) setResumeId(String(pick[0].id));
         if (qJd && j.some((x) => String(x.id) === qJd)) setJdId(qJd);
+        // Restore the last build after a refresh (?gen= is set on generate/open).
+        const qGen = searchParams.get("gen");
+        if (qGen && genLoaded.current !== qGen) openSaved(qGen);
         // profile context
         setGithub(me.github_url || "");
         const ex = (me.extras || {}) as Record<string, unknown>;
@@ -305,13 +336,14 @@ function BuilderInner() {
     if (!content || !sheetRef.current) return content;
     const clone: ResumeContent = JSON.parse(JSON.stringify(content));
     sheetRef.current.querySelectorAll<HTMLElement>("[data-path]").forEach((el) => {
-      setPath(clone as Record<string, unknown>, el.dataset.path!, el.textContent ?? "");
+      setPath(clone as Record<string, unknown>, el.dataset.path!, (el as HTMLElement).innerText ?? el.textContent ?? "");
     });
     setContent(clone);
     return clone;
   }
 
   async function generate() {
+    if (dirty.current && !window.confirm("Discard unsaved edits?")) return;
     if (!resumeId) {
       setError("No resume selected. Run an analysis first to add one.");
       return;
@@ -338,11 +370,15 @@ function BuilderInner() {
       const pc = data.content?._page_count;
       if (pc === 1 || pc === 2) setPageCount(pc);
       setContent(data.content);
+      setEpoch((n) => n + 1);
       setMarkdown(data.markdown || "");
       setNotes(data.tailoring_notes || data.content?._tailoring_notes || []);
       setCritique(data.critique || null);
       setAts(data.ats_coverage || null);
       setStyleRemoved(data.style_removed || 0);
+      dirty.current = false;
+      genLoaded.current = String(data.id);
+      router.replace(`/builder?gen=${data.id}`, { scroll: false });
     } catch (e) {
       if (mounted.current && e instanceof Error && e.message !== "unauthorized") setError(e.message);
     } finally {
@@ -360,6 +396,7 @@ function BuilderInner() {
     next.custom_sections = next.custom_sections || [];
     next.custom_sections.push({ title: "New section", body: "Click to edit this text." });
     setContent(next);
+    setEpoch((n) => n + 1);
   }
 
   function removeSection(i: number) {
@@ -368,12 +405,14 @@ function BuilderInner() {
     const next: ResumeContent = JSON.parse(JSON.stringify(cur));
     next.custom_sections!.splice(i, 1);
     setContent(next);
+    setEpoch((n) => n + 1);
   }
 
   async function save() {
     if (genId == null) return;
     const cur = syncFromDom();
     if (!cur) return;
+    setEpoch((n) => n + 1);
     setSaveLabel("Saving...");
     try {
       const data = await api<{ id: number; content: ResumeContent; markdown: string }>(
@@ -382,6 +421,7 @@ function BuilderInner() {
       );
       if (!mounted.current) return;
       if (data.markdown) setMarkdown(data.markdown);
+      dirty.current = false;
       setSaveLabel("Saved");
       setTimeout(() => mounted.current && setSaveLabel("Save"), 2000);
     } catch (e) {
@@ -408,6 +448,7 @@ function BuilderInner() {
 
   async function openSaved(id: string) {
     if (!id) return;
+    if (dirty.current && !window.confirm("Discard unsaved edits?")) return;
     setError(null);
     try {
       const data = await api<{ id: number; content: ResumeContent; markdown: string; critique?: Critique }>(
@@ -418,11 +459,15 @@ function BuilderInner() {
       const pc = data.content?._page_count;
       if (pc === 1 || pc === 2) setPageCount(pc);
       setContent(data.content);
+      setEpoch((n) => n + 1);
       setMarkdown(data.markdown || "");
       setNotes(data.content?._tailoring_notes || []);
       setCritique(data.critique || null);
       setAts(null);
       setStyleRemoved(0);
+      dirty.current = false;
+      genLoaded.current = String(data.id);
+      router.replace(`/builder?gen=${data.id}`, { scroll: false });
     } catch (e) {
       if (mounted.current && e instanceof Error && e.message !== "unauthorized") setError(e.message);
     }
@@ -727,14 +772,11 @@ function BuilderInner() {
             </Card>
           ) : (
             <Sheet
+              key={`${genId}-${epoch}`}
               content={content}
               sheetRef={sheetRef}
               onRemoveSection={removeSection}
-              pageCount={
-                content._page_count === 1 || content._page_count === 2
-                  ? (content._page_count as 1 | 2)
-                  : pageCount
-              }
+              pageCount={pageCount}
             />
           )}
         </section>

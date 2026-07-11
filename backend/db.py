@@ -213,7 +213,7 @@ def get_user(user_id):
 
 def update_user_profile(user_id, github_url, extras):
     _exec(
-        "UPDATE users SET github_url = %s, extras = %s WHERE id = %s",
+        "UPDATE users SET github_url = %s, extras = coalesce(extras, '{}'::jsonb) || %s WHERE id = %s",
         (github_url, Jsonb(extras or {}), user_id),
     )
 
@@ -222,6 +222,8 @@ def update_user_profile(user_id, github_url, extras):
 
 def create_session(user_id):
     token = secrets.token_hex(32)
+    # Opportunistic cleanup: sessions past the 30-day cookie lifetime are dead.
+    _exec("DELETE FROM sessions WHERE created_at < now() - interval '30 days'")
     _exec("INSERT INTO sessions (token, user_id) VALUES (%s, %s)", (token, user_id))
     return token
 
@@ -230,7 +232,7 @@ def get_session_user(token):
     return _one(
         """SELECT u.id, u.email, u.password_hash, u.github_url, u.extras
            FROM sessions s JOIN users u ON u.id = s.user_id
-           WHERE s.token = %s""",
+           WHERE s.token = %s AND s.created_at > now() - interval '30 days'""",
         (token,),
     )
 
@@ -272,10 +274,10 @@ def get_deal_breakers(user_id):
 
 def set_deal_breakers(user_id, data):
     """Store deal-breaker prefs on users.extras.deal_breakers (user-scoped)."""
-    row = _one("SELECT extras FROM users WHERE id = %s", (user_id,))
-    extras = (row or {}).get("extras") or {}
-    extras["deal_breakers"] = data
-    _exec("UPDATE users SET extras = %s WHERE id = %s", (Jsonb(extras), user_id))
+    _exec(
+        "UPDATE users SET extras = jsonb_set(coalesce(extras, '{}'::jsonb), '{deal_breakers}', %s) WHERE id = %s",
+        (Jsonb(data), user_id),
+    )
 
 
 # ---------------- jds ----------------
@@ -410,18 +412,19 @@ def get_job_prefs(user_id):
 
 def set_job_prefs(user_id, prefs):
     """Merge prefs into users.extras.job_prefs (user-scoped)."""
-    row = _one("SELECT extras FROM users WHERE id = %s", (user_id,))
-    extras = (row or {}).get("extras") or {}
     prefs = prefs or {}
-    extras["job_prefs"] = {
+    job_prefs = {
         "roles": prefs.get("roles", []),
         "location": prefs.get("location", ""),
         "seniority": prefs.get("seniority", ""),
         "work_type": prefs.get("work_type", ""),
         "job_type": prefs.get("job_type", ""),
     }
-    _exec("UPDATE users SET extras = %s WHERE id = %s", (Jsonb(extras), user_id))
-    return extras["job_prefs"]
+    _exec(
+        "UPDATE users SET extras = jsonb_set(coalesce(extras, '{}'::jsonb), '{job_prefs}', %s) WHERE id = %s",
+        (Jsonb(job_prefs), user_id),
+    )
+    return job_prefs
 
 
 # ---------------- saved jobs ----------------

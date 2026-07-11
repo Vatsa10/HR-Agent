@@ -38,6 +38,11 @@ export function proxy(req: NextRequest) {
   if (!hasSession) {
     const url = req.nextUrl.clone();
     url.pathname = "/signin";
+    url.search = "";
+    // Preserve the deep link so signin can bounce back (internal paths only).
+    if (pathname.startsWith("/") && !pathname.startsWith("//")) {
+      url.searchParams.set("next", pathname + req.nextUrl.search);
+    }
     return NextResponse.redirect(url);
   }
   return NextResponse.next();

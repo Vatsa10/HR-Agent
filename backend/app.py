@@ -112,7 +112,18 @@ def _unauth():
     return JSONResponse({"error": "unauthorized"}, status_code=401)
 
 
+async def _json(request) -> dict:
+    """Parsed JSON body, or {} when missing/malformed/non-dict (routes 400 on missing keys)."""
+    try:
+        body = await request.json()
+    except Exception:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
 def _persist_job(job_id: str, job: dict):
+    if job.get("status") in ("done", "error"):
+        job["finished_at"] = _time.time()
     try:
         JOBS_DIR.mkdir(parents=True, exist_ok=True)
         (JOBS_DIR / f"{job_id}.json").write_text(
@@ -126,10 +137,36 @@ def _load_job(job_id: str):
     f = JOBS_DIR / f"{job_id}.json"
     if f.exists():
         try:
-            return json.loads(f.read_text(encoding="utf-8"))
+            job = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            pass
+            return None
+        if job.get("status") == "running":
+            # Only workers flip status; a persisted "running" means the process
+            # died mid-run and the result is gone.
+            return {"status": "error", "error": "Server restarted during processing - please retry"}
+        return job
     return None
+
+
+_last_sweep = 0.0
+
+
+def _sweep_jobs():
+    """Drop finished in-memory jobs older than 1h; prune day-old job files (at most every ~10 min)."""
+    global _last_sweep
+    now = _time.time()
+    for jid, j in list(JOBS.items()):
+        if j.get("finished_at") and now - j["finished_at"] > 3600:
+            JOBS.pop(jid, None)
+    if now - _last_sweep < 600:
+        return
+    _last_sweep = now
+    try:
+        for f in JOBS_DIR.glob("*.json"):
+            if now - f.stat().st_mtime > 86400:
+                f.unlink()
+    except OSError as e:
+        logger.warning(f"job file sweep failed: {e}")
 
 
 STAGE_LABELS = {
@@ -189,7 +226,7 @@ def _jd_string(details):
 
 @app.post("/api/register")
 async def api_register(request: Request):
-    body = await request.json()
+    body = await _json(request)
     try:
         token = auth.register((body.get("email") or "").strip().lower(), body.get("password") or "")
     except ValueError as e:
@@ -201,7 +238,7 @@ async def api_register(request: Request):
 
 @app.post("/api/login")
 async def api_login(request: Request):
-    body = await request.json()
+    body = await _json(request)
     try:
         token = auth.login((body.get("email") or "").strip().lower(), body.get("password") or "")
     except ValueError as e:
@@ -279,7 +316,7 @@ async def api_me_update(request: Request):
     user = current_user(request)
     if not user:
         return _unauth()
-    body = await request.json()
+    body = await _json(request)
     db.update_user_profile(user["id"], body.get("github_url") or None, body.get("extras") or {})
     _bust_session(request)  # cached user carries github_url/extras
     return {"ok": True}
@@ -379,6 +416,7 @@ async def analyze(
 
     job_id = uuid.uuid4().hex
     JOBS[job_id] = {"status": "running", "stage": "parse"}
+    _persist_job(job_id, JOBS[job_id])
     threading.Thread(
         target=_run_job,
         args=(job_id, tmp.name, jd_url.strip(), jd_text.strip(), user["id"], resume.filename, pdf_hash),
@@ -434,7 +472,7 @@ async def api_import_linkedin(request: Request):
     user = current_user(request)
     if not user:
         return _unauth()
-    body = await request.json()
+    body = await _json(request)
     profile_url = (body.get("profile_url") or body.get("url") or "").strip()
     if "linkedin.com/in/" not in profile_url:
         return JSONResponse(
@@ -443,6 +481,7 @@ async def api_import_linkedin(request: Request):
         )
     job_id = uuid.uuid4().hex
     JOBS[job_id] = {"status": "running", "stage": "linkedin"}
+    _persist_job(job_id, JOBS[job_id])
     threading.Thread(
         target=_run_linkedin_import,
         args=(job_id, profile_url, user["id"]),
@@ -489,7 +528,7 @@ def _run_linkedin_audit(job_id: str, user, pdf_bytes, profile_url: str, resume_i
                     Path(tmp.name).unlink()
                 except OSError:
                     pass
-        elif profile_url:
+        if not profile_text.strip() and profile_url:
             import linkedin_service
 
             result = linkedin_service.profile_sections(profile_url)
@@ -558,6 +597,7 @@ async def api_linkedin_audit(
 
     job_id = uuid.uuid4().hex
     JOBS[job_id] = {"status": "running", "stage": "audit"}
+    _persist_job(job_id, JOBS[job_id])
     threading.Thread(
         target=_run_linkedin_audit,
         args=(job_id, user, pdf_bytes, profile_url, _int(resume_id), prid),
@@ -688,7 +728,7 @@ async def api_build(request: Request):
     user = current_user(request)
     if not user:
         return _unauth()
-    body = await request.json()
+    body = await _json(request)
     resume_id = body.get("resume_id")
     jd_id = body.get("jd_id")
     page_count = 2 if int(body.get("page_count") or 1) == 2 else 1
@@ -704,6 +744,7 @@ async def api_build(request: Request):
 
     job_id = uuid.uuid4().hex
     JOBS[job_id] = {"status": "running", "stage": "build"}
+    _persist_job(job_id, JOBS[job_id])
     threading.Thread(
         target=_run_build,
         args=(job_id, user, resume_id, jd_id, jd_text, resume_row["parsed"] or {}, page_count),
@@ -740,7 +781,7 @@ async def api_generated_update(request: Request, gen_id: int):
     row = db.get_generated(gen_id, user["id"])
     if not row:
         return JSONResponse({"error": "not found"}, status_code=404)
-    body = await request.json()
+    body = await _json(request)
     content = body.get("content") or {}
     markdown = json_resume_to_markdown(content)
     db.update_generated(gen_id, user["id"], content, markdown)
@@ -762,7 +803,7 @@ async def api_set_prefs(request: Request):
     user = current_user(request)
     if not user:
         return _unauth()
-    body = await request.json()
+    body = await _json(request)
     roles = body.get("roles") or []
     if not isinstance(roles, list):
         roles = [r.strip() for r in str(roles).split(",") if r.strip()]
@@ -870,7 +911,11 @@ def _run_job_search(job_id: str, keywords: str, location: str, user_id: int,
                     jobs[idx]["reason"] = s.get("reason")
         # Verdict band + deterministic deal-breaker vetoes. A vetoed job is
         # forced to the "excluded" band regardless of its score.
-        deal_breakers = db.get_deal_breakers(user_id)
+        try:
+            deal_breakers = db.get_deal_breakers(user_id)
+        except Exception:
+            logger.exception("get_deal_breakers lookup failed")
+            deal_breakers = None
         for j in jobs:
             veto = scoring.apply_vetoes(j, deal_breakers)
             j["vetoed"] = veto == "FAIL"
@@ -890,7 +935,7 @@ async def api_jobs_search(request: Request):
     user = current_user(request)
     if not user:
         return _unauth()
-    body = await request.json()
+    body = await _json(request)
     prefs = db.get_job_prefs(user["id"])
     # Resolve each filter from the request body, falling back to stored prefs.
     # Empty/absent values collapse to None so the extractor applies no filter.
@@ -905,6 +950,7 @@ async def api_jobs_search(request: Request):
         return JSONResponse({"error": "Provide keywords or set roles in preferences"}, status_code=400)
     job_id = uuid.uuid4().hex
     JOBS[job_id] = {"status": "running", "stage": "search"}
+    _persist_job(job_id, JOBS[job_id])
     threading.Thread(
         target=_run_job_search,
         args=(job_id, keywords, location, user["id"]),
@@ -950,7 +996,7 @@ async def api_deal_breakers_put(request: Request):
     user = current_user(request)
     if not user:
         return _unauth()
-    body = await request.json()
+    body = await _json(request)
     data = {
         "locations": [s for s in (body.get("locations") or []) if str(s).strip()],
         "work_types": [s for s in (body.get("work_types") or []) if str(s).strip()],
@@ -974,7 +1020,7 @@ async def api_jobs_save(request: Request):
     user = current_user(request)
     if not user:
         return _unauth()
-    body = await request.json()
+    body = await _json(request)
     job = body.get("job") or {}
     if not job.get("li_job_id"):
         return JSONResponse({"error": "job.li_job_id required"}, status_code=400)
@@ -987,7 +1033,7 @@ async def api_jobs_status(request: Request, job_id: int):
     user = current_user(request)
     if not user:
         return _unauth()
-    body = await request.json()
+    body = await _json(request)
     db.update_job_status(job_id, user["id"], (body.get("status") or "saved").strip())
     return {"ok": True}
 
@@ -997,17 +1043,17 @@ async def api_jobs_batch_match(request: Request):
     user = current_user(request)
     if not user:
         return _unauth()
-    body = await request.json()
-    row, resume_text = _resume_text_for(user["id"], body.get("resume_id"))
+    body = await _json(request)
+    row, resume_text = await asyncio.to_thread(_resume_text_for, user["id"], body.get("resume_id"))
     if not row or not resume_text:
         return JSONResponse({"error": "resume not found"}, status_code=404)
-    saved = db.list_jobs(user["id"])[:10]
+    saved = (await asyncio.to_thread(db.list_jobs, user["id"]))[:10]
     if not saved:
         return {"jobs": []}
     for start in range(0, len(saved), 6):
         batch = saved[start:start + 6]
         try:
-            scores = job_search.batch_llm_scores(resume_text, batch)
+            scores = await asyncio.to_thread(job_search.batch_llm_scores, resume_text, batch)
         except Exception:
             logger.exception("batch_llm_scores failed")
             continue
@@ -1018,8 +1064,9 @@ async def api_jobs_batch_match(request: Request):
                 job["llm_score"] = s.get("score")
                 job["llm_reason"] = s.get("reason")
                 try:
-                    db.update_job_scores(
-                        job["id"], user["id"], s.get("score"), s.get("reason")
+                    await asyncio.to_thread(
+                        db.update_job_scores,
+                        job["id"], user["id"], s.get("score"), s.get("reason"),
                     )
                 except Exception:
                     logger.exception("update_job_scores failed")
@@ -1031,13 +1078,13 @@ async def api_jobs_tailor(request: Request, job_id: int):
     user = current_user(request)
     if not user:
         return _unauth()
-    saved = db.get_job(job_id, user["id"])
+    saved = await asyncio.to_thread(db.get_job, job_id, user["id"])
     if not saved:
         return JSONResponse({"error": "job not found"}, status_code=404)
     jd_text = ""
     try:
         import linkedin_service
-        details = linkedin_service.job_details(saved["li_job_id"])
+        details = await asyncio.to_thread(linkedin_service.job_details, saved["li_job_id"])
         jd_text = _jd_string(details).strip()
     except Exception:
         logger.exception("job_details failed; falling back to stored fields")
@@ -1047,8 +1094,8 @@ async def api_jobs_tailor(request: Request, job_id: int):
             for k in ("title", "company", "snippet")
             if saved.get(k)
         ).strip()
-    jd_id = db.save_jd(user["id"], saved.get("url") or None, jd_text)
-    resumes = db.list_resumes(user["id"])
+    jd_id = await asyncio.to_thread(db.save_jd, user["id"], saved.get("url") or None, jd_text)
+    resumes = await asyncio.to_thread(db.list_resumes, user["id"])
     resume_hint = resumes[0]["id"] if resumes else None
     return {"jd_id": jd_id, "resume_hint": resume_hint}
 
@@ -1058,16 +1105,16 @@ async def api_jobs_deep_match(request: Request, job_id: int):
     user = current_user(request)
     if not user:
         return _unauth()
-    body = await request.json()
-    saved = db.get_job(job_id, user["id"])
+    body = await _json(request)
+    saved = await asyncio.to_thread(db.get_job, job_id, user["id"])
     if not saved:
         return JSONResponse({"error": "job not found"}, status_code=404)
-    row, resume_text = _resume_text_for(user["id"], body.get("resume_id"))
+    row, resume_text = await asyncio.to_thread(_resume_text_for, user["id"], body.get("resume_id"))
     if not row or not resume_text:
         return JSONResponse({"error": "resume not found"}, status_code=404)
     try:
         import linkedin_service
-        details = linkedin_service.job_details(saved["li_job_id"])
+        details = await asyncio.to_thread(linkedin_service.job_details, saved["li_job_id"])
     except Exception as e:
         logger.exception("job_details failed")
         return JSONResponse({"error": f"could not fetch job: {e}"}, status_code=502)
@@ -1075,7 +1122,7 @@ async def api_jobs_deep_match(request: Request, job_id: int):
     if not jd_text.strip():
         return JSONResponse({"error": "empty job description"}, status_code=502)
     try:
-        analysis = jd_matcher.match_resume_to_jd(resume_text, jd_text=jd_text)
+        analysis = await asyncio.to_thread(jd_matcher.match_resume_to_jd, resume_text, jd_text=jd_text)
     except Exception as e:
         logger.exception("deep match failed")
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -1090,8 +1137,11 @@ async def api_companies(request: Request):
     if not user:
         return _unauth()
     companies = db.list_companies(user["id"])
+    by_company: dict = {}
+    for row in db.list_hr_contacts(user["id"]):
+        by_company.setdefault(row.get("company_id"), []).append(row)
     for c in companies:
-        c["contacts"] = db.list_hr_contacts(user["id"], c["id"])
+        c["contacts"] = by_company.get(c["id"], [])
     return companies
 
 
@@ -1100,7 +1150,7 @@ async def api_companies_track(request: Request):
     user = current_user(request)
     if not user:
         return _unauth()
-    body = await request.json()
+    body = await _json(request)
     name = (body.get("name") or "").strip()
     if not name:
         return JSONResponse({"error": "name required"}, status_code=400)
@@ -1142,6 +1192,7 @@ async def api_companies_find_hr(request: Request, company_id: int):
         return JSONResponse({"error": "company not found"}, status_code=404)
     job_id = uuid.uuid4().hex
     JOBS[job_id] = {"status": "running", "stage": "hr"}
+    _persist_job(job_id, JOBS[job_id])
     threading.Thread(
         target=_run_find_hr,
         args=(job_id, company_id, company["name"], user["id"]),
@@ -1180,7 +1231,7 @@ async def api_hr_nl_search(request: Request):
     user = current_user(request)
     if not user:
         return _unauth()
-    body = await request.json()
+    body = await _json(request)
     query = (body.get("query") or "").strip()
     if not query:
         return JSONResponse({"error": "query required"}, status_code=400)
@@ -1191,6 +1242,7 @@ async def api_hr_nl_search(request: Request):
             return JSONResponse({"error": "company not found"}, status_code=404)
     job_id = uuid.uuid4().hex
     JOBS[job_id] = {"status": "running", "stage": "hr"}
+    _persist_job(job_id, JOBS[job_id])
     threading.Thread(
         target=_run_nl_search,
         args=(job_id, query, user["id"], company_id),
@@ -1205,12 +1257,13 @@ async def api_people_draft(request: Request):
     user = current_user(request)
     if not user:
         return _unauth()
-    body = await request.json()
+    body = await _json(request)
     name = (body.get("name") or "").strip()
     headline = (body.get("headline") or "").strip()
     profile_url = (body.get("profile_url") or "").strip()
-    _row, resume_text = _resume_text_for(user["id"], body.get("resume_id"))
-    drafted = cold_message.draft_message(
+    _row, resume_text = await asyncio.to_thread(_resume_text_for, user["id"], body.get("resume_id"))
+    drafted = await asyncio.to_thread(
+        cold_message.draft_message,
         resume_text,
         {"company": headline or ""},
         {"name": name, "headline": headline, "profile_url": profile_url},
@@ -1226,22 +1279,24 @@ async def api_hr_draft(request: Request, contact_id: int):
     user = current_user(request)
     if not user:
         return _unauth()
-    body = await request.json()
-    contacts = db.list_hr_contacts(user["id"])
+    body = await _json(request)
+    contacts = await asyncio.to_thread(db.list_hr_contacts, user["id"])
     contact = next((c for c in contacts if c["id"] == contact_id), None)
     if not contact:
         return JSONResponse({"error": "contact not found"}, status_code=404)
-    row, resume_text = _resume_text_for(user["id"], body.get("resume_id"))
+    row, resume_text = await asyncio.to_thread(_resume_text_for, user["id"], body.get("resume_id"))
     if not row or not resume_text:
         return JSONResponse({"error": "resume not found"}, status_code=404)
-    company = db.get_company(contact["company_id"], user["id"]) if contact.get("company_id") else None
+    company = (await asyncio.to_thread(db.get_company, contact["company_id"], user["id"])) if contact.get("company_id") else None
     target = {"company": (company or {}).get("name", "")}
     recruiter = {"name": contact.get("name"), "headline": contact.get("headline")}
-    drafted = cold_message.draft_message(resume_text, target, recruiter, tone=(body.get("tone") or "warm"))
+    drafted = await asyncio.to_thread(
+        cold_message.draft_message, resume_text, target, recruiter, tone=(body.get("tone") or "warm")
+    )
     combined = drafted.get("subject", "")
     if drafted.get("body"):
         combined = (combined + "\n\n" + drafted["body"]).strip()
-    db.update_hr_contact(contact_id, user["id"], message_draft=combined, status="drafted")
+    await asyncio.to_thread(db.update_hr_contact, contact_id, user["id"], message_draft=combined, status="drafted")
     return drafted
 
 
@@ -1250,7 +1305,7 @@ async def api_hr_update(request: Request, contact_id: int):
     user = current_user(request)
     if not user:
         return _unauth()
-    body = await request.json()
+    body = await _json(request)
     fields = {}
     if "status" in body:
         fields["status"] = body["status"]
@@ -1267,6 +1322,7 @@ async def api_hr_update(request: Request, contact_id: int):
 async def job_status(request: Request, job_id: str):
     if not current_user(request):
         return _unauth()
+    _sweep_jobs()
     job = JOBS.get(job_id) or _load_job(job_id)
     if not job:
         return JSONResponse({"error": "Unknown job"}, status_code=404)

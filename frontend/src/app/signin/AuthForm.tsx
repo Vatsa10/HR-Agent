@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api, ApiError } from "@/lib/api";
 import { Button, Input, Field, ErrorInline } from "@/components/ui";
 import { Logo } from "@/components/Logo";
@@ -32,6 +32,7 @@ const COPY: Record<Mode, { title: string; sub: string; cta: string; endpoint: st
 
 export function AuthForm({ mode }: { mode: Mode }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const c = COPY[mode];
   const [email, setEmail] = React.useState("");
   const [password, setPassword] = React.useState("");
@@ -45,7 +46,8 @@ export function AuthForm({ mode }: { mode: Mode }) {
     setLoading(true);
     try {
       await api(c.endpoint, { method: "POST", body: { email: email.trim(), password } });
-      router.push("/analyze");
+      const next = searchParams.get("next");
+      router.push(next && next.startsWith("/") && !next.startsWith("//") ? next : "/analyze");
     } catch (err) {
       const msg =
         err instanceof ApiError && err.message === "unauthorized"

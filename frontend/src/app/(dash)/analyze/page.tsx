@@ -167,7 +167,7 @@ export default function AnalyzePage() {
   const [jdText, setJdText] = useState("");
   const [hasJd, setHasJd] = useState(false);
 
-  const job = useJob<AnalysisResultData>();
+  const job = useJob<AnalysisResultData>("analyze");
 
   const submit = useCallback(
     async (e: React.FormEvent) => {

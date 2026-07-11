@@ -53,6 +53,11 @@ export async function pollJob<T = unknown>(
 ): Promise<T> {
   for (;;) {
     const res = await apiFetch(`/jobs/${jobId}`);
+    if (!res.ok) {
+      if (res.status === 401) throw new ApiError("unauthorized", 401);
+      const body = await res.json().catch(() => null);
+      throw new ApiError(body?.error || `Job lookup failed (${res.status})`, res.status);
+    }
     const job = await res.json();
     if (onStage) onStage(job.stage, job.stage_label);
     if (job.status === "done") return job.result as T;

@@ -342,7 +342,8 @@ export default function LinkedInOptimizerPage() {
         api<{ job_id: string }>("/linkedin/audit", { method: "POST", body: fd }),
       );
 
-      if (!res && job.error && /session not found/i.test(job.error) && mounted.current) {
+      const err = job.lastError.current;
+      if (!res && err && /session not found/i.test(err) && mounted.current) {
         setSessionOk(false);
       }
     },
