@@ -8,6 +8,14 @@ import { api, pollJob } from "@/lib/api";
 import { Button, Card, Field, Input, Select, Textarea, Skeleton, ErrorInline, Segmented } from "@/components/ui";
 import { cn } from "@/lib/format";
 
+/* Resume look, applied as a CSS theme on the sheet (client-side, no server render). */
+type Template = "classic" | "faangpath" | "modern";
+const TEMPLATES: { value: Template; label: string }[] = [
+  { value: "classic", label: "Classic" },
+  { value: "faangpath", label: "FAANGPath" },
+  { value: "modern", label: "Modern" },
+];
+
 /* ------------------------------------------------------------------ *
  * Types (JSON Resume-ish, loosely typed — backend shape varies)
  * ------------------------------------------------------------------ */
@@ -201,6 +209,7 @@ function BuilderInner() {
   const [resumeId, setResumeId] = useState("");
   const [jdId, setJdId] = useState("");
   const [pageCount, setPageCount] = useState<1 | 2>(1);
+  const [template, setTemplate] = useState<Template>("classic");
 
   const [content, setContent] = useState<ResumeContent | null>(null);
   // Bumped whenever content is replaced programmatically so the contentEditable
@@ -369,7 +378,8 @@ function BuilderInner() {
       setGenId(data.id);
       const pc = data.content?._page_count;
       if (pc === 1 || pc === 2) setPageCount(pc);
-      setContent(data.content);
+      // fresh build carries the currently-selected template so Save/refresh keep it
+      setContent({ ...data.content, _template: template });
       setEpoch((n) => n + 1);
       setMarkdown(data.markdown || "");
       setNotes(data.tailoring_notes || data.content?._tailoring_notes || []);
@@ -459,6 +469,7 @@ function BuilderInner() {
       const pc = data.content?._page_count;
       if (pc === 1 || pc === 2) setPageCount(pc);
       setContent(data.content);
+      setTemplate((data.content?._template as Template) || "classic");
       setEpoch((n) => n + 1);
       setMarkdown(data.markdown || "");
       setNotes(data.content?._tailoring_notes || []);
@@ -488,6 +499,41 @@ function BuilderInner() {
         #resume-sheet.is-compact ul { margin-top: 0.25rem; }
         #resume-sheet.is-compact ul li { line-height: 1.3; }
         #resume-sheet.is-compact header p { margin-top: 0.5rem; }
+
+        /* ---- Template: FAANGPath (left-aligned, serif, ruled headings) ---- */
+        #resume-sheet[data-template="faangpath"] {
+          font-family: Georgia, "Times New Roman", serif;
+        }
+        #resume-sheet[data-template="faangpath"] header { text-align: left; }
+        #resume-sheet[data-template="faangpath"] header h1 {
+          font-size: 1.7rem; letter-spacing: 0;
+        }
+        #resume-sheet[data-template="faangpath"] header > div {
+          justify-content: flex-start;
+        }
+        #resume-sheet[data-template="faangpath"] header p {
+          margin-left: 0; text-align: left; max-width: none;
+        }
+        #resume-sheet[data-template="faangpath"] h2 {
+          text-transform: uppercase; letter-spacing: 0.06em; font-size: 12px;
+          color: #111; border-bottom: 1.5px solid #111; padding-bottom: 2px;
+          margin-top: 1rem;
+        }
+
+        /* ---- Template: Modern (centered small-caps name, green accents) ---- */
+        #resume-sheet[data-template="modern"] header h1 {
+          text-transform: uppercase; letter-spacing: 0.12em; font-size: 2rem;
+          color: #130810;
+        }
+        #resume-sheet[data-template="modern"] h2 {
+          text-transform: uppercase; letter-spacing: 0.03em; font-size: 15px;
+          font-weight: 700; color: #0F4539;
+          border-bottom: 2px solid #130810; padding-bottom: 3px;
+        }
+        #resume-sheet[data-template="modern"] a { color: #0F4539; }
+        #resume-sheet[data-template="modern"] header [class*="text-blue"] {
+          color: #0F4539;
+        }
 
         @media print {
           @page { size: A4; margin: 14mm; }
@@ -558,6 +604,24 @@ function BuilderInner() {
               onChange={setPageCount}
               options={[{ value: 1, label: "1 page" }, { value: 2, label: "2 pages" }]}
             />
+          </Field>
+
+          <Field label="Template" htmlFor="tpl-sel">
+            <Select
+              id="tpl-sel"
+              className="h-10 w-auto min-w-[130px]"
+              value={template}
+              onChange={(e) => {
+                const t = e.target.value as Template;
+                setTemplate(t);
+                // persist the choice onto the live content so Save/refresh keep it
+                setContent((c) => (c ? { ...c, _template: t } : c));
+              }}
+            >
+              {TEMPLATES.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </Select>
           </Field>
 
           <Button onClick={generate} loading={generating} disabled={loading || !hasResume}>
@@ -777,6 +841,7 @@ function BuilderInner() {
               sheetRef={sheetRef}
               onRemoveSection={removeSection}
               pageCount={pageCount}
+              template={template}
             />
           )}
         </section>
@@ -854,11 +919,13 @@ function Sheet({
   sheetRef,
   onRemoveSection,
   pageCount,
+  template,
 }: {
   content: ResumeContent;
   sheetRef: React.RefObject<HTMLDivElement | null>;
   onRemoveSection: (i: number) => void;
   pageCount: 1 | 2;
+  template: Template;
 }) {
   const compact = pageCount === 1;
   const b = content.basics || {};
@@ -874,6 +941,7 @@ function Sheet({
       id="resume-sheet"
       ref={sheetRef}
       data-page-count={pageCount}
+      data-template={template}
       className={cn(
         "resume-sheet mx-auto w-full max-w-[820px] rounded-xl border border-line bg-paper shadow-sm",
         compact ? "is-compact p-6 md:p-10" : "p-8 md:p-12",
