@@ -66,12 +66,12 @@ def parser_agent(state: PipelineState) -> PipelineState:
             resume_data = JSONResume(
                 **json.loads(cache_file.read_text(encoding="utf-8"))
             )
-            logger.info(f"🤖 ParserAgent: cache hit ({cache_file.name})")
+            logger.info(f" ParserAgent: cache hit ({cache_file.name})")
         except Exception:
             resume_data = None
 
     if resume_data is None:
-        logger.info("🤖 ParserAgent: extracting resume from PDF")
+        logger.info(" ParserAgent: extracting resume from PDF")
         resume_data = PDFHandler().extract_json_from_pdf(state["pdf_path"])
         if resume_data is None:
             raise ValueError("Failed to extract resume data from PDF")
@@ -96,11 +96,11 @@ def github_agent(state: PipelineState) -> PipelineState:
         (p for p in profiles if p.network and p.network.lower() == "github"), None
     )
     if not gh:
-        logger.info("🤖 GitHubAgent: no GitHub profile found, skipping")
+        logger.info(" GitHubAgent: no GitHub profile found, skipping")
         state["github_data"] = {}
         return state
 
-    logger.info(f"🤖 GitHubAgent: enriching from {gh.url}")
+    logger.info(f" GitHubAgent: enriching from {gh.url}")
     try:
         data = fetch_and_display_github_info(gh.url) or {}
         state["github_data"] = data
@@ -114,7 +114,7 @@ def github_agent(state: PipelineState) -> PipelineState:
 
 def jd_agent(state: PipelineState) -> PipelineState:
     """JDAgent — unique tool: URL fetch + JD/resume fit scoring."""
-    logger.info("🤖 JDAgent: matching resume against job description")
+    logger.info(" JDAgent: matching resume against job description")
     try:
         if not state.get("jd_text") and state.get("jd_url"):
             from jd_matcher import fetch_jd_from_url
@@ -145,7 +145,7 @@ def evaluator_agent(state: PipelineState) -> PipelineState:
     from evaluator import ResumeEvaluator
     from prompt import DEFAULT_MODEL, MODEL_PARAMETERS
 
-    logger.info("🤖 EvaluatorAgent: scoring resume")
+    logger.info(" EvaluatorAgent: scoring resume")
     evaluator = ResumeEvaluator(
         model_name=DEFAULT_MODEL, model_params=MODEL_PARAMETERS.get(DEFAULT_MODEL)
     )

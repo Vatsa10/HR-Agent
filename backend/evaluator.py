@@ -48,7 +48,7 @@ class ResumeEvaluator:
     def evaluate_resume(self, resume_text: str) -> EvaluationData:
         self._last_resume_text = resume_text
         full_prompt = self._load_evaluation_prompt(resume_text)
-        # logger.info(f"🔤 Evaluation prompt being sent: {full_prompt}")
+        # logger.info(f" Evaluation prompt being sent: {full_prompt}")
         try:
             system_message = self.template_manager.render_template(
                 "resume_evaluation_system_message"
@@ -79,7 +79,7 @@ class ResumeEvaluator:
 
             response_text = response["message"]["content"]
             response_text = extract_json_from_response(response_text)
-            logger.error(f"🔤 Prompt response: {response_text}")
+            logger.error(f" Prompt response: {response_text}")
 
             evaluation_dict = json.loads(response_text)
             evaluation_data = EvaluationData(**evaluation_dict)

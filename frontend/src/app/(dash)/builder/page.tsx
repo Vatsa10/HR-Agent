@@ -534,6 +534,13 @@ function BuilderInner() {
         #resume-sheet[data-template="modern"] header [class*="text-blue"] {
           color: #0F4539;
         }
+        /* modern packs skills into two columns like the source template */
+        #resume-sheet[data-template="modern"] [data-section="skills"] {
+          column-count: 2; column-gap: 2rem;
+        }
+        #resume-sheet[data-template="modern"] [data-section="skills"] > div {
+          break-inside: avoid;
+        }
 
         @media print {
           @page { size: A4; margin: 14mm; }
@@ -787,6 +794,13 @@ function BuilderInner() {
           ) : null}
         </div>
       ) : null}
+
+      {/* ATS panel needs a JD — tell the user why it's absent after a build. */}
+      {content && !ats && !jdId && (
+        <div className="mb-5 rounded-xl border border-dashed border-line bg-surface p-3 text-xs text-ink-faint print:hidden">
+          Attach a job description above and regenerate to see ATS keyword coverage and JD-tailored scoring.
+        </div>
+      )}
 
       {/* ---------------- The resume sheet (hero) with sticky toolbar ---------------- */}
       <section className="space-y-3">
@@ -1047,7 +1061,7 @@ function Sheet({
       {(content.skills || []).length > 0 && (
         <>
           <SectionHeading>Skills</SectionHeading>
-          <div className="space-y-1">
+          <div className="space-y-1" data-section="skills">
             {content.skills!.map((s, i) => {
               const base = `skills.${i}`;
               return (

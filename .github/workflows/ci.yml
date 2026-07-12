@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install deps
+        run: pip install -r backend/requirements.txt
+      - name: Module self-checks (pure, no secrets/network)
+        working-directory: backend
+        run: |
+          for m in scoring job_sources style_guardrails jd_matcher job_search resume_builder cold_message agents; do
+            echo "--- $m ---"
+            python "$m.py"
+          done
+      - name: Import app (wiring sanity)
+        working-directory: backend
+        run: python -c "import app; print('app imports OK')"
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+      - name: Typecheck
+        working-directory: frontend
+        run: npx tsc --noEmit -p tsconfig.json
+      - name: Build
+        working-directory: frontend
+        run: npm run build

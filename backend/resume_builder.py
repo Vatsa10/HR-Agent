@@ -293,10 +293,17 @@ Return ONLY JSON:
   ]
 }}
 
+Be demanding. A resume is rarely perfect. Actively hunt for and propose edits on:
+- Bullets with no measurable outcome (no %, number, scale, or concrete result).
+- Weak/passive openers ("responsible for", "helped", "worked on", "involved in").
+- Vague claims ("improved performance", "various tasks") with no specifics.
+- Filler adjectives instead of evidence.
+For each of these, propose a truthful rewrite that sharpens WITHOUT inventing numbers the profile does not support (if no metric exists, tighten the verb and specificity, do not fabricate a figure).
+
 Rules:
 - Every "old" MUST be an exact substring of the built resume so it can be applied mechanically. If you cannot quote it exactly, do not propose that edit.
-- "safe" = fully supported by the profile. "stretch" = plausible but thinly supported. "fabrication" = not supported by the profile at all (flag these; never invent support).
-- Do not add em-dashes or clichés. Keep edits truthful. Empty arrays if nothing needs changing."""
+- Tag EVERY substantive bullet in per_bullet. "safe" = specific AND fully supported. "stretch" = vague/thin/plausible-but-unproven. "fabrication" = not supported by the profile at all (flag, never invent support). Do not lazily tag everything "safe" — if a bullet lacks a concrete outcome it is at best a "stretch".
+- Do not add em-dashes or clichés. Keep edits truthful. Only return empty arrays if the resume genuinely has zero weak or unquantified bullets."""
 
 
 def _apply_edits(content: dict, edits: list) -> int:

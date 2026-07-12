@@ -85,7 +85,7 @@ def _fetch_github_api(api_url, params=None):
                 f" GitHub API rate limit low: {remaining}/{limit} requests remaining. Resets at {reset_time}"
             )
             print(
-                f"💡 Tip: Set GITHUB_TOKEN environment variable to increase rate limits (60/hour → 5000/hour)"
+                f" Tip: Set GITHUB_TOKEN environment variable to increase rate limits (60/hour  5000/hour)"
             )
 
             # Never sleep here: this runs inside web requests. Continue with
@@ -292,7 +292,7 @@ def fetch_all_github_repos(github_url: str, max_repos: int = 100) -> List[Dict]:
 
             print(f"Found {len(projects)} repositories")
             print(
-                f"📊 Project classification: {open_source_count} open source, {self_project_count} self projects"
+                f" Project classification: {open_source_count} open source, {self_project_count} self projects"
             )
             return projects
 
@@ -367,7 +367,7 @@ def generate_projects_json(projects: List[Dict]) -> List[Dict]:
         )
 
         print(
-            f"🤖 Using LLM to select top 5 projects from {len(projects)} repositories..."
+            f" Using LLM to select top 5 projects from {len(projects)} repositories..."
         )
 
         # Initialize the LLM provider

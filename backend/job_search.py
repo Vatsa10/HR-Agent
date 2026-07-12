@@ -76,6 +76,12 @@ def search(keywords, location=None, work_type=None, experience_level=None,
         li_rows = f_li.result() or []
         fh_rows = f_fh.result() or []
 
+    # Surface a silently-dead source: 0 rows from one source is not an error, but
+    # if it stays 0 across searches it means the endpoint got blocked/changed.
+    logger.info("job sources: linkedin=%d freehire=%d", len(li_rows), len(fh_rows))
+    if not li_rows and not fh_rows:
+        logger.warning("ALL job sources returned 0 rows for %r @ %r", keywords, location)
+
     merged = job_sources.merge_dedup(li_rows, fh_rows)
     return _keep_titled(merged)[:limit]
 

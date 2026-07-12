@@ -24,6 +24,9 @@ ENV LLM_PROVIDER=openai \
     HOME=/app \
     TEMP=/tmp
 
-# Shell form so ${PORT} expands. Defaults to 7860 (Hugging Face); Render/Fly
-# override PORT with their own value.
-CMD uvicorn app:app --host 0.0.0.0 --port ${PORT}
+# Shell form so ${PORT} expands. PORT defaults to 7860; hosts override it.
+# IMPORTANT: run a SINGLE worker. Background jobs (JOBS) and the session cache
+# live in this process's memory; a second worker cannot see them, so job polling
+# would miss in-flight work. Scale by running one bigger box, not more workers
+# (move JOBS to Redis/Postgres first if you ever need multiple workers).
+CMD uvicorn app:app --host 0.0.0.0 --port ${PORT} --workers 1

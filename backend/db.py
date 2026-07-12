@@ -138,7 +138,9 @@ CREATE TABLE IF NOT EXISTS hr_contacts (
     created_at timestamptz DEFAULT now()
 );
 -- Ship-now sprint additions (additive, safe on existing rows).
-ALTER TABLE resumes           ADD COLUMN IF NOT EXISTS deal_breakers jsonb;
+-- NB: deal_breakers now lives on users.extras.deal_breakers (user-scoped); the
+-- old resumes.deal_breakers column is no longer written and is left in place only
+-- to avoid a destructive migration on existing DBs.
 ALTER TABLE generated_resumes ADD COLUMN IF NOT EXISTS critique      jsonb;
 ALTER TABLE saved_jobs        ADD COLUMN IF NOT EXISTS scores        jsonb;
 """
