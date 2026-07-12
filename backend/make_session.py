@@ -12,7 +12,7 @@ import json
 from getpass import getpass
 from pathlib import Path
 
-OUT = Path(__file__).resolve().parent.parent / "linkedin_session.json"
+OUT = Path(__file__).resolve().parent / "linkedin_session.json"
 
 
 def main():

@@ -81,7 +81,10 @@ def patch_rate_limit():
 
 
 def session_path() -> str:
-    return os.environ.get("LINKEDIN_SESSION_PATH", "linkedin_session.json")
+    # Default sits next to the backend code (CWD-independent), so it resolves the
+    # same whether the app is launched from backend/ (local) or /app (Docker).
+    default = os.path.join(os.path.dirname(os.path.abspath(__file__)), "linkedin_session.json")
+    return os.environ.get("LINKEDIN_SESSION_PATH", default)
 
 
 def _materialize_from_env() -> None:
